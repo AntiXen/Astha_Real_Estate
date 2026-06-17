@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Noto+Sans+Bengali:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-bengali: "Hind Siliguri", "Noto Sans Bengali", "Inter", sans-serif;
+  --font-sans: "Inter", "Hind Siliguri", sans-serif;
+  
+  --color-brand-green-50: #021A15;
+  --color-brand-green-100: rgba(255, 255, 255, 0.1);
+  --color-brand-green-600: #105e45;
+  --color-brand-green-700: #0d4835;
+  --color-brand-green-800: #010D0A;
+  --color-brand-gold-100: rgba(212, 175, 55, 0.12);
+  --color-brand-gold-500: #D4AF37;
+  --color-brand-gold-600: #C5A028;
+}
+
+body {
+  font-family: var(--font-bengali);
+  background-color: #ffffff;
+  color: #1e293b;
+}
+
+/* Custom gorgeous scrollbar for our properties drawer and pages */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #ffffff;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(176, 146, 63, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #C9A84C;
+}
+
+html {
+  font-size: 112.5%; /* Scale base font size to 18px, making overall typography 12.5% larger and more readable */
+  scroll-behavior: smooth;
+}
+
+/* Theme helper classes */
+.glass-nav {
+  background: rgba(1, 13, 10, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.gold-glow {
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.25);
+}
+
+.status-tag {
+  background: linear-gradient(90deg, #D4AF37, #C5A028);
+  color: #010D0A;
+}
+
+.radial-glow {
+  background: radial-gradient(circle at 50% 40%, rgba(212, 175, 55, 0.12) 0%, transparent 65%);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Astha Real Estate",
+  "description": "Astha Real Estate - Premium Bangladesh Real Estate Aggregator connecting verified properties from top developers directly with home buyers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
