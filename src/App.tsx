@@ -257,6 +257,8 @@ export default function App() {
           settings={settings} 
           currentView={viewState.page}
           onNavigate={(view) => handleNavigate(view)}
+          selectedCategoryId={selectedCategoryId}
+          setSelectedCategoryId={setSelectedCategoryId}
         />
       )}
 
