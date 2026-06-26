@@ -754,29 +754,6 @@ export default function AdminPanel({
             </form>
           )}
 
-          {/* Direct Demo Admin Login Bypass without requiring credentials or signups */}
-          <div className="relative my-5">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
-            <div className="relative flex justify-center text-[10px] uppercase"><span className="bg-white px-2.5 text-slate-400">অথবা ডেমো প্রবেশ</span></div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsAuthenticated(true);
-              setCurrentAdminName('অমিত ঘোষ (ডেমো)');
-              setCurrentAdminEmail('amitghosh.115127@gmail.com');
-              // Save to localStorage
-              localStorage.setItem('astha_active_admin_name', 'অমিত ঘোষ (ডেমো)');
-              localStorage.setItem('astha_active_admin_email', 'amitghosh.115127@gmail.com');
-            }}
-            className="w-full rounded-xl border border-[#C9A84C] bg-amber-50/55 text-amber-950 hover:bg-amber-100/50 py-3 text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer animate-pulse"
-            id="demo-login-bypass"
-          >
-            <Sparkles className="h-4.5 w-4.5 text-[#C9A84C]" />
-            <span>সরাসরি ডেমো অ্যাডমিন প্যানেলে প্রবেশ করুন</span>
-          </button>
-
           <button
             type="button"
             onClick={() => { window.location.hash = ''; }}
