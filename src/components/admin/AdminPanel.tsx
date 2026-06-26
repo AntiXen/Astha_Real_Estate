@@ -6,6 +6,9 @@ import {
   LogOut
 } from 'lucide-react';
 import { SiteSettings, Category, Company, Property } from '../../types';
+import { 
+  signInAdmin, signUpAdmin, signOutAdmin, getCurrentAdmin, initializeLocalAdmins, getAdminUsers, createSubAdmin, deleteAdminUser
+} from '../../services/auth';
 
 interface AdminPanelProps {
   settings: SiteSettings;
@@ -44,38 +47,11 @@ export default function AdminPanel({
   onResetDatabase,
   userEmail
 }: AdminPanelProps) {
-  // Authentication structure with localStorage persistence
-  const [registeredAdmins, setRegisteredAdmins] = useState<{name: string, email: string, password: string, isSuper?: boolean}[]>(() => {
-    const raw = localStorage.getItem('astha_admins_registered');
-    if (raw) {
-      try {
-        return JSON.parse(raw);
-      } catch (e) {
-        // Safe fallback
-      }
-    }
-    // Preloaded default administrators including user's specific email address
-    const defaults = [
-      { name: 'Amit Ghosh', email: 'amitghosh.115127@gmail.com', password: 'SaintLouis2026!', isSuper: true },
-      { name: 'Admin Developer', email: 'developer@astha.com', password: 'admin123', isSuper: false }
-    ];
-    localStorage.setItem('astha_admins_registered', JSON.stringify(defaults));
-    localStorage.setItem('astha_super_admin_email', 'amitghosh.115127@gmail.com');
-    localStorage.setItem('astha_super_admin_created', 'true');
-    return defaults;
-  });
+  // Authentication structure (now using auth service with local fallback)
+  const [registeredAdmins, setRegisteredAdmins] = useState<{name: string, email: string, password?: string, isSuper?: boolean}[]>([]);
 
-  const [superAdminEmail, setSuperAdminEmail] = useState<string>(() => {
-    const stored = localStorage.getItem('astha_super_admin_email');
-    if (stored) return stored;
-    return 'amitghosh.115127@gmail.com';
-  });
-
-  const [isSuperAdminCreated, setIsSuperAdminCreated] = useState<boolean>(() => {
-    const stored = localStorage.getItem('astha_super_admin_created');
-    if (stored) return stored === 'true';
-    return true; // Default to true because defaults contains Amit Ghosh
-  });
+  const [superAdminEmail, setSuperAdminEmail] = useState<string>('amitghosh.115127@gmail.com');
+  const [isSuperAdminCreated, setIsSuperAdminCreated] = useState<boolean>(false);
 
   // Sub-Admins section management states
   const [subAdminName, setSubAdminName] = useState<string>('');
@@ -194,35 +170,57 @@ export default function AdminPanel({
   useEffect(() => {
     setLocalSettings({ ...settings });
   }, [settings]);
-
-  // Read current active administrator level
+  // Read current active administrator level (computed from currentAdminEmail)
   const isSubAdmin = currentAdminEmail.toLowerCase() !== superAdminEmail.toLowerCase();
 
-  // UX session restore: retain authentication state upon quick reloads
+  // Initialize auth/admins on mount
   useEffect(() => {
-    const savedEmail = localStorage.getItem('astha_active_admin_email');
-    const savedName = localStorage.getItem('astha_active_admin_name');
-    if (savedEmail && savedName) {
-      const exists = registeredAdmins.some(admin => admin.email.toLowerCase() === savedEmail.toLowerCase());
-      if (exists) {
-        setIsAuthenticated(true);
-        setCurrentAdminName(savedName);
-        setCurrentAdminEmail(savedEmail);
+    (async () => {
+      // Ensure local admins exist for fallback
+      try { initializeLocalAdmins(); } catch (e) { /* ignore */ }
+
+      // Load admin users (from Supabase or local fallback)
+      try {
+        const admins = await getAdminUsers();
+        // map to local display shape
+        setRegisteredAdmins(admins.map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
+        const superAdmin = admins.find(a => a.isSuper);
+        if (superAdmin) setSuperAdminEmail(superAdmin.email);
+        setIsSuperAdminCreated(Boolean(superAdmin));
+      } catch (e) {
+        // ignore
       }
-    }
+
+      // Restore current authenticated admin, if any
+      try {
+        const current = await getCurrentAdmin();
+        if (current) {
+          setIsAuthenticated(true);
+          setCurrentAdminName(current.name);
+          setCurrentAdminEmail(current.email);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('astha_active_admin_email');
-    localStorage.removeItem('astha_active_admin_name');
-    setIsAuthenticated(false);
-    setCurrentAdminEmail('');
-    setCurrentAdminName('');
-    window.location.hash = ''; // Clear hash to navigate back to index/home
+    (async () => {
+      try {
+        await signOutAdmin();
+      } catch (e) {
+        // ignore
+      }
+      setIsAuthenticated(false);
+      setCurrentAdminEmail('');
+      setCurrentAdminName('');
+      window.location.hash = ''; // Clear hash to navigate back to index/home
+    })();
   };
 
   // Auth processing
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     setAuthSuccessMsg('');
@@ -232,22 +230,22 @@ export default function AdminPanel({
       return;
     }
 
-    const foundAdmin = registeredAdmins.find(
-      admin => admin.email.toLowerCase() === authEmail.trim().toLowerCase() && admin.password === authPassword
-    );
-
-    if (foundAdmin) {
-      setIsAuthenticated(true);
-      setCurrentAdminName(foundAdmin.name);
-      setCurrentAdminEmail(foundAdmin.email);
-      localStorage.setItem('astha_active_admin_name', foundAdmin.name);
-      localStorage.setItem('astha_active_admin_email', foundAdmin.email);
-    } else {
+    const res = await signInAdmin(authEmail.trim().toLowerCase(), authPassword);
+    if (res?.error) {
       setAuthError('প্রদত্ত ইমেইল অথবা পাসওয়ার্ডটি সঠিক নয়! পুনরায় চেষ্টা করুন।');
+      return;
+    }
+    if (res.user) {
+      setIsAuthenticated(true);
+      setCurrentAdminName(res.user.name);
+      setCurrentAdminEmail(res.user.email);
+      // refresh admin list
+      const admins = await getAdminUsers();
+      setRegisteredAdmins(admins.map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
     }
   };
 
-  const handleSignup = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     setAuthSuccessMsg('');
@@ -262,31 +260,29 @@ export default function AdminPanel({
       return;
     }
 
-    // Check if email already registered
-    const exists = registeredAdmins.some(admin => admin.email.toLowerCase() === signupEmail.trim().toLowerCase());
-    if (exists) {
-      setAuthError('এই ইমেইলটি ইতিমধ্যে অ্যাডমিন হিসেবে রেজিস্টার্ড রয়েছে! অনুগ্রহ করে সরাসরি লগইন করুন।');
+    const res = await signUpAdmin(signupName.trim(), signupEmail.trim().toLowerCase(), signupPassword);
+    if (res?.error) {
+      setAuthError('রেজিস্ট্রেশন ব্যর্থ হয়েছে।');
       return;
     }
 
-    const newAdmin = {
-      name: signupName.trim(),
-      email: signupEmail.trim().toLowerCase(),
-      password: signupPassword,
-      isSuper: true
-    };
+    // refresh admin list
+    const admins = await getAdminUsers();
+    setRegisteredAdmins(admins.map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
 
-    const updatedAdmins = [...registeredAdmins, newAdmin];
-    setRegisteredAdmins(updatedAdmins);
-    localStorage.setItem('astha_admins_registered', JSON.stringify(updatedAdmins));
-    localStorage.setItem('astha_super_admin_email', newAdmin.email);
-    localStorage.setItem('astha_super_admin_created', 'true');
-    setSuperAdminEmail(newAdmin.email);
-    setIsSuperAdminCreated(true);
+    if (res.user) {
+      setIsAuthenticated(true);
+      setCurrentAdminName(res.user.name);
+      setCurrentAdminEmail(res.user.email);
+      setAuthEmail(res.user.email);
+      setAuthPassword('');
+      setAuthSuccessMsg('অভিনন্দন! আপনার অ্যাডমিন অ্যাকাউন্ট তৈরি হয়ে গেছে।');
+      return;
+    }
 
     setAuthSuccessMsg('অভিনন্দন! আপনার সুপার অ্যাডমিন অ্যাকাউন্ট রেজিস্টার হয়েছে। এবার লগইন করুন।');
-    setAuthEmail(newAdmin.email);
-    setAuthPassword(newAdmin.password);
+    setAuthEmail(signupEmail.trim().toLowerCase());
+    setAuthPassword(signupPassword);
     setAuthMode('login');
   };
 
@@ -533,13 +529,12 @@ export default function AdminPanel({
   };
 
   // Sub-Admins management logic
-  const handleAddSubAdmin = (e: React.FormEvent) => {
+  const handleAddSubAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubAdminError('');
     setSubAdminSuccess('');
-
     if (isSubAdmin) {
-      setSubAdminError('দুঃখিত, শুধুমাত্র সুপার অ্যাডমিন নতুন সাব-অ্যাডমিন যুক্ত করতে পারেন!');
+      setSubAdminError('দুঃখিত, শুধুমাত্র সুপার-অ্যাডমিন নতুন সাব-অ্যাডমিন যুক্ত করতে পারেন!');
       return;
     }
 
@@ -548,25 +543,16 @@ export default function AdminPanel({
       return;
     }
 
-    const emailLower = subAdminEmail.trim().toLowerCase();
-    const exists = registeredAdmins.some(admin => admin.email.toLowerCase() === emailLower);
-    if (exists) {
-      setSubAdminError('এই ইমেইলটি ইতিমধ্যে অ্যাডমিন তালিকায় রেজিস্টার্ড রয়েছে!');
+    const res = await createSubAdmin(subAdminName.trim(), subAdminEmail.trim().toLowerCase(), subAdminPassword.trim());
+    if (res?.error) {
+      setSubAdminError('সাব-অ্যাডমিন তৈরি করতে সমস্যা হয়েছে।');
       return;
     }
 
-    const newSub = {
-      name: subAdminName.trim(),
-      email: emailLower,
-      password: subAdminPassword.trim(),
-      isSuper: false
-    };
+    const admins = await getAdminUsers();
+    setRegisteredAdmins(admins.map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
 
-    const updated = [...registeredAdmins, newSub];
-    setRegisteredAdmins(updated);
-    localStorage.setItem('astha_admins_registered', JSON.stringify(updated));
-
-    setSubAdminSuccess(`নতুন সাব-অ্যাডমিন "${newSub.name}" সফলভাবে তালিকায় যুক্ত হয়েছে! তারা এই ইমেইল ও পাসওয়ার্ড দিয়ে সরাসরি লগইন করতে পারবেন।`);
+    setSubAdminSuccess(`নতুন সাব-অ্যাডমিন "${subAdminName.trim()}" সফলভাবে তালিকায় যুক্ত হয়েছে!`);
     setSubAdminName('');
     setSubAdminEmail('');
     setSubAdminPassword('');
@@ -588,14 +574,19 @@ export default function AdminPanel({
     }
 
     if (confirm('আপনি কি নিশ্চিতভাবে এই সাব-অ্যাডমিন অ্যাকাউন্টটি ডিলিট করতে চান?')) {
-      const updated = registeredAdmins.filter(admin => admin.email.toLowerCase() !== email.toLowerCase());
-      setRegisteredAdmins(updated);
-      localStorage.setItem('astha_admins_registered', JSON.stringify(updated));
-      setSubAdminSuccess('সাব-অ্যাডমিন অ্যাকাউন্টটি তালিকা থেকে সফলভাবে মুছে ফেলা হয়েছে।');
-      
-      setTimeout(() => {
-        setSubAdminSuccess('');
-      }, 4000);
+      (async () => {
+        const res = await deleteAdminUser(email);
+        if (res?.error) {
+          alert('ডিলিট করতে সমস্যা হয়েছে');
+          return;
+        }
+        const admins = await getAdminUsers();
+        setRegisteredAdmins(admins.map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
+        setSubAdminSuccess('সাব-অ্যাডমিন অ্যাকাউন্টটি তালিকা থেকে সফলভাবে মুছে ফেলা হয়েছে।');
+        setTimeout(() => {
+          setSubAdminSuccess('');
+        }, 4000);
+      })();
     }
   };
 
@@ -605,6 +596,8 @@ export default function AdminPanel({
       inq.id === id ? { ...inq, isNew: !inq.isNew } : inq
     ));
   };
+
+  const showSignupOption = !isSuperAdminCreated || registeredAdmins.length === 0;
 
   // Render Login Gate
   if (!isAuthenticated) {
@@ -626,11 +619,7 @@ export default function AdminPanel({
           </div>
 
           {/* Secure mode switch tabs to sign up as an admin */}
-          {isSuperAdminCreated ? (
-            <div className="text-center text-[10px] text-indigo-950 bg-indigo-50/70 border border-indigo-100 p-2.5 rounded-xl mb-5 select-none font-sans font-medium">
-              🔒 আস্থার সেন্ট্রাল সিকিউরড সেশন সক্রিয় (নতুন সাইন-আপ নিষ্ক্রিয় করা আছে)
-            </div>
-          ) : (
+          {showSignupOption && (
             <div className="flex border border-slate-200 rounded-xl overflow-hidden p-1 bg-slate-50 mb-5 text-center text-xs">
               <button
                 type="button"
@@ -656,6 +645,17 @@ export default function AdminPanel({
                 সাইন আপ (নতুন প্রশাসক)
               </button>
             </div>
+          )}
+
+          {showSignupOption && registeredAdmins.length === 0 && (
+            <button
+              type="button"
+              onClick={() => { setAuthMode('signup'); setAuthError(''); setAuthSuccessMsg(''); }}
+              className="w-full rounded-xl border border-[#C9A84C] bg-amber-50/80 text-amber-950 hover:bg-amber-100/80 py-2.5 text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer mb-4"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>প্রথম প্রশাসক অ্যাকাউন্ট তৈরি করুন</span>
+            </button>
           )}
 
           {authSuccessMsg && (

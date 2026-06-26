@@ -133,6 +133,13 @@ export default function App() {
     if (window.location.hash.startsWith('#property-')) {
       window.location.hash = '';
     }
+    // Support path-based /admin URLs (static hosts without SPA fallback)
+    const pathname = window.location.pathname || '';
+    if (pathname === '/admin' || pathname.endsWith('/admin')) {
+      // Mirror into hash routing used by the app
+      window.location.hash = 'admin';
+      setViewState({ page: 'admin', propertyId: null });
+    }
 
     loadDatabase();
     
@@ -164,18 +171,17 @@ export default function App() {
   };
 
   const handleUpdateCategories = async (newCats: Category[]) => {
-    // Delete missing categories or add new
-    localStorage.setItem('ast_categories', JSON.stringify(newCats));
+    await dbService.saveCategories(newCats);
     setCategories(newCats);
   };
 
   const handleUpdateCompanies = async (newComps: Company[]) => {
-    localStorage.setItem('ast_companies', JSON.stringify(newComps));
+    await dbService.saveCompanies(newComps);
     setCompanies(newComps);
   };
 
   const handleUpdateProperties = async (newProps: Property[]) => {
-    localStorage.setItem('ast_properties', JSON.stringify(newProps));
+    await dbService.saveProperties(newProps);
     setProperties(newProps);
   };
 
