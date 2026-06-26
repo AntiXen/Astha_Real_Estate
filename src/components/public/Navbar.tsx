@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Phone, MessageSquare, BookOpen, Menu, X, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Phone, MessageSquare, Menu, X, ArrowRight, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SiteSettings } from '../../types';
 
 interface NavbarProps {
   settings: SiteSettings;
-  currentView: 'home' | 'admin' | 'details';
-  onNavigate: (view: 'home' | 'admin' | 'details') => void;
+  currentView: 'home' | 'details';
+  onNavigate: (view: 'home' | 'details') => void;
   selectedCategoryId?: string;
   setSelectedCategoryId?: (id: string) => void;
 }
@@ -129,34 +129,23 @@ export default function Navbar({
           </a>
 
           {/* Consultation Button */}
-          {currentView === 'admin' ? (
-            <button
-              onClick={() => onNavigate('home')}
-              className="flex items-center space-x-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition-all cursor-pointer hover:-translate-y-0.5 duration-200"
-              id="goto-landing-btn"
-            >
-              <BookOpen className="h-3.5 w-3.5 shrink-0 text-white" />
-              <span>মূল সাইট</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                onNavigate('home');
-                setTimeout(() => {
-                  const element = document.getElementById('lead-form');
-                  if (element) {
-                    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }
-                }, 100);
-              }}
-              className="flex items-center space-x-2 rounded-xl bg-[#0A1D37] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#112D55] transition-all cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-0.5 duration-200"
-              id="goto-admin-btn"
-              title="এজেন্টদের সাথে কন্সালটেশন করুন"
-            >
-              <MessageSquare className="h-3.5 w-3.5 text-white shrink-0" />
-              <span>এজেন্টদের সাথে কথা বলুন</span>
-            </button>
-          )}
+          <button
+            onClick={() => {
+              onNavigate('home');
+              setTimeout(() => {
+                const element = document.getElementById('lead-form');
+                if (element) {
+                  element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }, 100);
+            }}
+            className="flex items-center space-x-2 rounded-xl bg-[#0A1D37] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#112D55] transition-all cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-0.5 duration-200"
+            id="goto-admin-btn"
+            title="এজেন্টদের সাথে কন্সালটেশন করুন"
+          >
+            <MessageSquare className="h-3.5 w-3.5 text-white shrink-0" />
+            <span>এজেন্টদের সাথে কথা বলুন</span>
+          </button>
         </div>
 
         {/* Mobile Hamburger Button */}
