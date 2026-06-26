@@ -112,6 +112,9 @@ export default function App() {
   // Load database entities
   const loadDatabase = async () => {
     try {
+      // Initialize database with default data if empty
+      await dbService.initialize();
+      
       const s = await dbService.getSettings();
       const cat = await dbService.getCategories();
       const comp = await dbService.getCompanies();

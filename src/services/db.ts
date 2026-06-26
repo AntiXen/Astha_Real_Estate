@@ -31,19 +31,45 @@ export const dbService = {
   // --- Site Settings ---
   async getSettings(): Promise<SiteSettings> {
     if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('site_settings').select('*').single();
+      const { data, error } = await supabase.from('site_settings').select('*').eq('id', 'default').single();
       if (!error && data) {
         return data as SiteSettings;
       }
       logSupabaseError('getSettings', error);
+      
+      // If no settings found, initialize with defaults
+      if (error?.code === 'PGRST116') { // No rows found
+        await dbService.initializeSettings();
+        return defaultSettings;
+      }
     }
 
     return readLocalItem<SiteSettings>(SETTINGS_KEY, defaultSettings);
   },
 
+  async initializeSettings(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      // Try to insert default settings
+      const { error: insertError } = await supabase
+        .from('site_settings')
+        .insert(defaultSettings)
+        .select()
+        .single();
+      
+      if (insertError && insertError.code !== '23505') { // 23505 = unique violation (already exists)
+        logSupabaseError('initializeSettings', insertError);
+      }
+    }
+  },
+
   async saveSettings(settings: SiteSettings): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('site_settings').upsert(settings, { onConflict: 'id' });
+      // Use upsert with proper syntax
+      const { error } = await supabase
+        .from('site_settings')
+        .upsert(settings, { onConflict: 'id' })
+        .select();
+      
       if (!error) {
         return;
       }
@@ -60,13 +86,35 @@ export const dbService = {
         return data as Category[];
       }
       logSupabaseError('getCategories', error);
+      
+      // If no categories found, initialize with defaults
+      if (data?.length === 0) {
+        await dbService.initializeCategories();
+      }
     }
     return readLocalItem<Category[]>(CATEGORIES_KEY, defaultCategories);
   },
 
+  async initializeCategories(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase
+        .from('categories')
+        .insert(defaultCategories)
+        .select();
+      
+      if (error && error.code !== '23505') {
+        logSupabaseError('initializeCategories', error);
+      }
+    }
+  },
+
   async saveCategories(categories: Category[]): Promise<Category[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id' });
+      const { error } = await supabase
+        .from('categories')
+        .upsert(categories, { onConflict: 'id' })
+        .select();
+      
       if (!error) {
         return categories;
       }
@@ -99,13 +147,35 @@ export const dbService = {
         return data as Company[];
       }
       logSupabaseError('getCompanies', error);
+      
+      // If no companies found, initialize with defaults
+      if (data?.length === 0) {
+        await dbService.initializeCompanies();
+      }
     }
     return readLocalItem<Company[]>(COMPANIES_KEY, defaultCompanies);
   },
 
+  async initializeCompanies(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase
+        .from('companies')
+        .insert(defaultCompanies)
+        .select();
+      
+      if (error && error.code !== '23505') {
+        logSupabaseError('initializeCompanies', error);
+      }
+    }
+  },
+
   async saveCompanies(companies: Company[]): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').upsert(companies, { onConflict: 'id' });
+      const { error } = await supabase
+        .from('companies')
+        .upsert(companies, { onConflict: 'id' })
+        .select();
+      
       if (!error) {
         return companies;
       }
@@ -138,8 +208,26 @@ export const dbService = {
         return data as Property[];
       }
       logSupabaseError('getProperties', error);
+      
+      // If no properties found, initialize with defaults
+      if (data?.length === 0) {
+        await dbService.initializeProperties();
+      }
     }
     return readLocalItem<Property[]>(PROPERTIES_KEY, defaultProperties);
+  },
+
+  async initializeProperties(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase
+        .from('properties')
+        .insert(defaultProperties)
+        .select();
+      
+      if (error && error.code !== '23505') {
+        logSupabaseError('initializeProperties', error);
+      }
+    }
   },
 
   async getPropertyById(id: string): Promise<Property | undefined> {
@@ -149,7 +237,11 @@ export const dbService = {
 
   async saveProperties(properties: Property[]): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').upsert(properties, { onConflict: 'id' });
+      const { error } = await supabase
+        .from('properties')
+        .upsert(properties, { onConflict: 'id' })
+        .select();
+      
       if (!error) {
         return properties;
       }
@@ -181,10 +273,10 @@ export const dbService = {
       await supabase.from('companies').delete();
       await supabase.from('categories').delete();
       await supabase.from('site_settings').delete();
-      await supabase.from('site_settings').upsert(defaultSettings, { onConflict: 'id' });
-      await supabase.from('categories').upsert(defaultCategories, { onConflict: 'id' });
-      await supabase.from('companies').upsert(defaultCompanies, { onConflict: 'id' });
-      await supabase.from('properties').upsert(defaultProperties, { onConflict: 'id' });
+      await supabase.from('site_settings').insert(defaultSettings);
+      await supabase.from('categories').insert(defaultCategories);
+      await supabase.from('companies').insert(defaultCompanies);
+      await supabase.from('properties').insert(defaultProperties);
       return;
     }
 
@@ -192,5 +284,46 @@ export const dbService = {
     writeLocalItem(CATEGORIES_KEY, defaultCategories);
     writeLocalItem(COMPANIES_KEY, defaultCompanies);
     writeLocalItem(PROPERTIES_KEY, defaultProperties);
+  },
+
+  // Initialize database with default data if tables are empty
+  async initialize(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      // Initialize settings
+      const { data: settingsData } = await supabase.from('site_settings').select('id').eq('id', 'default').single();
+      if (!settingsData) {
+        const { error } = await supabase.from('site_settings').insert(defaultSettings);
+        if (error && error.code !== '23505') {
+          logSupabaseError('initialize settings', error);
+        }
+      }
+
+      // Initialize categories if empty
+      const { data: categoriesData } = await supabase.from('categories').select('id').limit(1);
+      if (!categoriesData || categoriesData.length === 0) {
+        const { error } = await supabase.from('categories').insert(defaultCategories);
+        if (error && error.code !== '23505') {
+          logSupabaseError('initialize categories', error);
+        }
+      }
+
+      // Initialize companies if empty
+      const { data: companiesData } = await supabase.from('companies').select('id').limit(1);
+      if (!companiesData || companiesData.length === 0) {
+        const { error } = await supabase.from('companies').insert(defaultCompanies);
+        if (error && error.code !== '23505') {
+          logSupabaseError('initialize companies', error);
+        }
+      }
+
+      // Initialize properties if empty
+      const { data: propertiesData } = await supabase.from('properties').select('id').limit(1);
+      if (!propertiesData || propertiesData.length === 0) {
+        const { error } = await supabase.from('properties').insert(defaultProperties);
+        if (error && error.code !== '23505') {
+          logSupabaseError('initialize properties', error);
+        }
+      }
+    }
   }
 };
