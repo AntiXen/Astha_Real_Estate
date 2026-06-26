@@ -7,6 +7,8 @@ const SETTINGS_KEY = 'ast_settings';
 const CATEGORIES_KEY = 'ast_categories';
 const COMPANIES_KEY = 'ast_companies';
 const PROPERTIES_KEY = 'ast_properties';
+const CACHE_TIMESTAMP_KEY = 'ast_cache_timestamp';
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
 
 function logSupabaseError(operation: string, error: any) {
   if (!error) return;
@@ -23,16 +25,27 @@ function readLocalItem<T>(key: string, fallback: T): T {
   }
 }
 
-function writeLocalItem<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify(value));
+function isCacheStale(): boolean {
+  const timestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+  if (!timestamp) return true;
+  const cacheTime = parseInt(timestamp, 10);
+  return Date.now() - cacheTime > CACHE_DURATION;
+}
+
+function updateCacheTimestamp() {
+  localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
 }
 
 export const dbService = {
   // --- Site Settings ---
   async getSettings(): Promise<SiteSettings> {
+    // Always try to get fresh data from Supabase first
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('site_settings').select('*').eq('id', 'default').single();
       if (!error && data) {
+        updateCacheTimestamp();
+        // Update local cache with fresh data
+        writeLocalItem(SETTINGS_KEY, data);
         return data as SiteSettings;
       }
       logSupabaseError('getSettings', error);
@@ -44,6 +57,7 @@ export const dbService = {
       }
     }
 
+    // Fall back to localStorage only if Supabase is unavailable
     return readLocalItem<SiteSettings>(SETTINGS_KEY, defaultSettings);
   },
 
@@ -80,9 +94,13 @@ export const dbService = {
 
   // --- Categories ---
   async getCategories(): Promise<Category[]> {
+    // Always try to get fresh data from Supabase first
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('categories').select('*');
       if (!error && data) {
+        updateCacheTimestamp();
+        // Update local cache with fresh data
+        writeLocalItem(CATEGORIES_KEY, data);
         return data as Category[];
       }
       logSupabaseError('getCategories', error);
@@ -141,9 +159,13 @@ export const dbService = {
 
   // --- Companies (Developers) ---
   async getCompanies(): Promise<Company[]> {
+    // Always try to get fresh data from Supabase first
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('companies').select('*');
       if (!error && data) {
+        updateCacheTimestamp();
+        // Update local cache with fresh data
+        writeLocalItem(COMPANIES_KEY, data);
         return data as Company[];
       }
       logSupabaseError('getCompanies', error);
@@ -202,9 +224,13 @@ export const dbService = {
 
   // --- Properties ---
   async getProperties(): Promise<Property[]> {
+    // Always try to get fresh data from Supabase first
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('properties').select('*');
       if (!error && data) {
+        updateCacheTimestamp();
+        // Update local cache with fresh data
+        writeLocalItem(PROPERTIES_KEY, data);
         return data as Property[];
       }
       logSupabaseError('getProperties', error);
