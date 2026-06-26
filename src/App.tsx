@@ -19,6 +19,7 @@ import Footer from './components/public/Footer';
 import TrustSection from './components/public/TrustSection';
 import PropertyCard from './components/public/PropertyCard';
 import PropertyDetailsModal from './components/public/PropertyDetailsModal';
+import AdminPanel from './components/admin/AdminPanel';
 
 const BengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 
@@ -128,17 +129,39 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Clear any URL hash to ensure landing page is always shown
-    if (window.location.hash) {
-      window.location.hash = '';
+    // Check if the current path is /admin
+    const pathname = window.location.pathname || '';
+    if (pathname === '/admin' || pathname.endsWith('/admin')) {
+      window.location.hash = 'admin';
+      setViewState({ page: 'admin', propertyId: null });
+    } else {
+      // Proactively clear any stale property hash to avoid unwanted auto-popup on load
+      if (window.location.hash.startsWith('#property-')) {
+        window.location.hash = '';
+      }
     }
 
     loadDatabase();
     
-    // Always keep the page at 'home' (landing page)
-    setViewState({ page: 'home', propertyId: null });
+    // Hash routing support for easy VSCode/frame simulation
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#admin') {
+        setViewState({ page: 'admin', propertyId: null });
+      } else {
+        // Do not parse propertyId from hash anymore to prevent automatic popups
+        setViewState((prev) => ({
+          page: prev.page === 'admin' ? 'home' : prev.page,
+          propertyId: prev.propertyId
+        }));
+      }
+    };
 
-    return () => {};
+    window.addEventListener('hashchange', handleHashChange);
+    // Initial check
+    handleHashChange();
+
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
   // Update callbacks for Admin Control Room writes
@@ -171,10 +194,14 @@ export default function App() {
   };
 
   // Safe navigation handler
-  const handleNavigate = (page: 'home' | 'details', propertyId: string | null = null) => {
-    // Only allow navigation to home page
-    if (page !== 'home') {
-      return;
+  const handleNavigate = (page: 'home' | 'admin' | 'details', propertyId: string | null = null) => {
+    if (page === 'admin') {
+      window.location.hash = 'admin';
+    } else {
+      // Do not pollute hash with property selection to prevent automatic popups
+      if (window.location.hash && window.location.hash !== '#admin') {
+        window.location.hash = '';
+      }
     }
     setViewState({ page, propertyId });
     
@@ -231,19 +258,36 @@ export default function App() {
       </div>
       
       {/* 1. Navbar */}
-      <Navbar 
-        settings={settings} 
-        currentView={viewState.page}
-        onNavigate={(view) => handleNavigate(view)}
-        selectedCategoryId={selectedCategoryId}
-        setSelectedCategoryId={setSelectedCategoryId}
-      />
+      {viewState.page !== 'admin' && (
+        <Navbar 
+          settings={settings} 
+          currentView={viewState.page}
+          onNavigate={(view) => handleNavigate(view)}
+          selectedCategoryId={selectedCategoryId}
+          setSelectedCategoryId={setSelectedCategoryId}
+        />
+      )}
 
       {/* 2. Workspace router */}
       <main className="flex-1">
         
-        {/* PUBLIC LANDING VIEW */}
-        <div id="landing-main-view">
+        {viewState.page === 'admin' ? (
+          /* ADMIN VIEW */
+          <AdminPanel 
+            settings={settings}
+            categories={categories}
+            companies={companies}
+            properties={properties}
+            onUpdateSettings={handleUpdateSettings}
+            onUpdateCategories={handleUpdateCategories}
+            onUpdateCompanies={handleUpdateCompanies}
+            onUpdateProperties={handleUpdateProperties}
+            onResetDatabase={handleResetDatabase}
+            userEmail="amitghosh.115127@gmail.com"
+          />
+        ) : (
+          /* PUBLIC LANDING VIEW */
+          <div id="landing-main-view">
             
             {/* SECTION 2: Cinematic Golden-Hour Hero Banner */}
             <section 
@@ -968,17 +1012,21 @@ export default function App() {
             </section>
 
           </div>
+        )}
 
       </main>
 
       {/* 5. Footer */}
-      <Footer 
-        settings={settings} 
-        onNavigate={(view) => handleNavigate(view)}
-      />
+      {viewState.page !== 'admin' && (
+        <Footer 
+          settings={settings} 
+          onNavigate={(view) => handleNavigate(view)}
+        />
+      )}
 
       {/* GLOBAL PERSISTENT CONVERSION TRIGGERS - FLOATING ACTION BUTTONS (BOTTOM RIGHT) */}
-      <div className="fixed bottom-6 right-6 z-40 flex flex-col space-y-3" id="global-floating-ctas">
+      {viewState.page !== 'admin' && (
+        <div className="fixed bottom-6 right-6 z-40 flex flex-col space-y-3" id="global-floating-ctas">
           
           {/* Glow Direct Call Button */}
           <a
@@ -1003,6 +1051,7 @@ export default function App() {
           </a>
 
         </div>
+      )}
 
       {/* 6. IMMERSIVE PROPERTY FULL DETAILS OVERLAY MODAL */}
       {viewState.propertyId && (
