@@ -4,13 +4,13 @@
 -- Site settings table for a single global configuration row.
 create table if not exists site_settings (
   id text primary key,
-  logoText text not null,
-  bannerTitle text not null,
-  bannerSubtitle text not null,
-  bannerImage text not null,
-  contactPhone text not null,
-  contactWhatsapp text not null,
-  officeAddress text not null,
+  "logoText" text not null,
+  "bannerTitle" text not null,
+  "bannerSubtitle" text not null,
+  "bannerImage" text not null,
+  "contactPhone" text not null,
+  "contactWhatsapp" text not null,
+  "officeAddress" text not null,
   email text not null,
   inserted_at timestamptz default now() not null,
   updated_at timestamptz default now() not null
@@ -28,8 +28,8 @@ create table if not exists categories (
 -- Companies table for developers/partners.
 create table if not exists companies (
   id text primary key,
-  companyName text not null,
-  logoUrl text not null,
+  "companyName" text not null,
+  "logoUrl" text not null,
   established text not null,
   inserted_at timestamptz default now() not null,
   updated_at timestamptz default now() not null
@@ -42,16 +42,16 @@ create table if not exists properties (
   description text not null,
   price text not null,
   location text not null,
-  categoryId text not null references categories(id) on delete set null,
-  companyId text not null references companies(id) on delete set null,
+  "categoryId" text not null references categories(id) on delete set null,
+  "companyId" text not null references companies(id) on delete set null,
   images jsonb not null,
-  isFeatured boolean not null default false,
+  "isFeatured" boolean not null default false,
   status text not null,
   bedrooms int,
   bathrooms int,
   size int,
   facing text,
-  videoUrl text,
+  "videoUrl" text,
   inserted_at timestamptz default now() not null,
   updated_at timestamptz default now() not null
 );
@@ -61,7 +61,6 @@ create table if not exists admin_users (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   email text not null unique,
-  -- Link to Supabase Auth user id when using Supabase Auth; keep password_hash nullable for local fallback
   auth_user_id text unique,
   password_hash text,
   is_super boolean not null default false,
