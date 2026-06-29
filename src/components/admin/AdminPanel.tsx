@@ -581,7 +581,7 @@ export default function AdminPanel({
                 onClick={handleSaveProperty} 
                 className="rounded-xl bg-[#0B2545] hover:bg-[#122e4e] text-white px-6 py-2.5 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
               >
-                <Save className="h-4 w-4" /><span>সেভ করুন</span>
+                <Save className="h-4 w-4" /><span> সেভ করুন </span>
               </button>
             </div>
           </div>
