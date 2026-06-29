@@ -21,10 +21,7 @@ const SUPER_ADMIN_CREATED_KEY = 'astha_super_admin_created';
 const ACTIVE_ADMIN_EMAIL_KEY = 'astha_active_admin_email';
 const ACTIVE_ADMIN_NAME_KEY = 'astha_active_admin_name';
 
-const defaultAdmins: LocalAdminUser[] = [
-  { id: 'admin-1', name: 'Amit Ghosh', email: 'amitghosh.115127@gmail.com', password: 'SaintLouis2026!', isSuper: true },
-  { id: 'admin-2', name: 'Admin Developer', email: 'developer@astha.com', password: 'admin123', isSuper: false }
-];
+const defaultAdmins: LocalAdminUser[] = [];
 
 function readLocalAdmins(includeDefaults = true): LocalAdminUser[] {
   const raw = localStorage.getItem(ADMIN_USERS_KEY);
@@ -71,7 +68,6 @@ export async function getAdminUsers(): Promise<AdminUser[]> {
         isSuper: row.is_super
       })) as AdminUser[];
     }
-    console.warn('[auth] getAdminUsers supabase error', error);
   }
   return readLocalAdmins(false).map((admin) => ({
     userId: admin.id,
@@ -85,15 +81,21 @@ export async function signInAdmin(email: string, password: string) {
   if (isSupabaseEnabled && supabase) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error };
+    
     if (data?.session?.user) {
-      const { data: profile, error: profileError } = await supabase
+      // FIX: Use .limit(1) instead of .single() to prevent JSON coerce errors
+      const { data: profiles, error: profileError } = await supabase
         .from('admin_users')
         .select('name, email, is_super')
         .eq('auth_user_id', data.session.user.id)
-        .single();
+        .limit(1);
+        
+      const profile = profiles?.[0];
+        
       if (profileError || !profile) {
-        return { error: profileError || new Error('Admin profile not found') };
+        return { error: profileError || new Error('Admin profile not found in database') };
       }
+      
       setLocalActiveAdmin(profile.name, profile.email);
       return {
         user: {
@@ -120,21 +122,19 @@ export async function signUpAdmin(name: string, email: string, password: string)
   if (isSupabaseEnabled && supabase) {
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) return { error };
+    
     const userId = data?.user?.id;
     if (!userId) {
       return { error: new Error('Unable to create user') };
     }
 
-    // Determine whether this should be the first super admin
     let makeSuper = false;
     try {
       const { data: existing, error: countError } = await supabase.from('admin_users').select('*', { count: 'exact' }).limit(1);
       if (!countError && (!existing || existing.length === 0)) {
         makeSuper = true;
       }
-    } catch (e) {
-      // ignore and default to non-super
-    }
+    } catch (e) {}
 
     const { error: profileError } = await supabase.from('admin_users').insert({
       auth_user_id: userId,
@@ -142,9 +142,11 @@ export async function signUpAdmin(name: string, email: string, password: string)
       email,
       is_super: makeSuper
     });
+    
     if (profileError) {
       return { error: profileError };
     }
+    
     setLocalActiveAdmin(name, email.toLowerCase());
     return { user: { userId, name, email: email.toLowerCase(), isSuper: makeSuper } };
   }
@@ -154,7 +156,7 @@ export async function signUpAdmin(name: string, email: string, password: string)
   if (exists) {
     return { error: new Error('Email already registered') };
   }
-  // Local fallback: if there are no admins present, make this the super admin.
+  
   const makeSuperLocal = admins.length === 0;
   const newAdmin: LocalAdminUser = {
     id: `admin-${Date.now()}`,
@@ -163,6 +165,7 @@ export async function signUpAdmin(name: string, email: string, password: string)
     password,
     isSuper: makeSuperLocal
   };
+  
   const updated = [...admins, newAdmin];
   saveLocalAdmins(updated);
   setLocalActiveAdmin(name, newAdmin.email);
@@ -179,26 +182,28 @@ export async function signOutAdmin() {
 export async function getCurrentAdmin(): Promise<AdminUser | null> {
   if (isSupabaseEnabled && supabase) {
     const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      console.warn('[auth] getCurrentAdmin session error', error);
-      return null;
-    }
-    if (!data?.session?.user) return null;
+    if (error || !data?.session?.user) return null;
+    
     const userId = data.session.user.id;
-    const { data: profile, error: profileError } = await supabase
+    
+    // FIX: Use .limit(1) instead of .single() to prevent JSON coerce errors
+    const { data: profiles, error: profileError } = await supabase
       .from('admin_users')
       .select('name, email, is_super')
       .eq('auth_user_id', userId)
-      .single();
-    if (profileError || !profile) {
-      console.warn('[auth] getCurrentAdmin profile error', profileError);
-      return null;
-    }
+      .limit(1);
+      
+    const profile = profiles?.[0];
+      
+    if (profileError || !profile) return null;
+    
     setLocalActiveAdmin(profile.name, profile.email);
     return { userId, name: profile.name, email: profile.email, isSuper: profile.is_super };
   }
+  
   const active = getLocalActiveAdmin();
   if (!active) return null;
+  
   const admins = readLocalAdmins(true);
   const found = admins.find((admin) => admin.email.toLowerCase() === active.email.toLowerCase());
   if (!found) {
@@ -215,9 +220,7 @@ export async function createSubAdmin(name: string, email: string, password: stri
 export async function deleteAdminUser(email: string) {
   if (isSupabaseEnabled && supabase) {
     const { error } = await supabase.from('admin_users').delete().eq('email', email);
-    if (error) {
-      return { error };
-    }
+    if (error) return { error };
     const admins = await getAdminUsers();
     return { admins };
   }
@@ -230,6 +233,5 @@ export async function deleteAdminUser(email: string) {
 export function initializeLocalAdmins() {
   const raw = localStorage.getItem(ADMIN_USERS_KEY);
   if (raw) return;
-  localStorage.setItem(SUPER_ADMIN_EMAIL_KEY, defaultAdmins[0].email);
   localStorage.setItem(SUPER_ADMIN_CREATED_KEY, 'false');
 }

@@ -45,6 +45,19 @@ export interface Property {
   videoUrl?: string; // Optional embedded or local dataURL MP4 video
 }
 
+// Added real Inquiry interface for Lead Capture
+export interface Inquiry {
+  id: string;
+  name: string;
+  category: string;
+  location: string;
+  budget: string;
+  phone: string;
+  message?: string;
+  status: 'new' | 'read';
+  created_at?: string;
+}
+
 export interface RouteState {
   page: 'home' | 'admin' | 'details';
   propertyId: string | null;
