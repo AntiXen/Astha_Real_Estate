@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Save, X } from 'lucide-react';
+import { LogOut, Save, X, Upload, FileVideo, Image as ImageIcon } from 'lucide-react';
 import { SiteSettings, Category, Company, Property, Inquiry } from '../../types';
 import { getCurrentAdmin, initializeLocalAdmins, getAdminUsers, createSubAdmin, deleteAdminUser, signOutAdmin } from '../../services/auth';
 import { dbService } from '../../services/db';
@@ -198,7 +198,7 @@ export default function AdminPanel({
 
   const handleDeleteCompany = (id: string) => {
     if (isSubAdmin) return setCompError('কোম্পানি মুছে ফেলার অনুমতি নেই!');
-    if (companies.length <= 1) return setCompError('সর্বনিম্ন একটি কোম্পানি থাকতে হবে!');
+    if (companies.length <= 1) return setCompError('তালিকায় অন্তত একটি কোম্পানি রাখা আবশ্যক!');
     
     onUpdateCompanies(companies.filter(c => c.id !== id));
     setCompSuccess('কোম্পানি অপসারিত হয়েছে!');
@@ -228,12 +228,15 @@ export default function AdminPanel({
   const handleSaveProperty = () => {
     if (!propTitle || !propPrice || !propLocation) return alert('শিরোনাম, মূল্য এবং লোকেশন প্রদান করুন!');
     
+    const defaultImg = 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&q=80&w=800';
+    const finalImages = propImages.length > 0 ? propImages : [defaultImg];
+
     const savedProp: Property = {
       id: editingProperty?.id || `prop-${Date.now()}`,
       title: propTitle.trim(), description: propDesc.trim() || 'যাচাইকৃত একটি প্রিমিয়াম প্রজেক্ট।',
       price: propPrice.trim(), location: propLocation.trim(),
       categoryId: propCategory, companyId: propCompany,
-      images: propImages.length > 0 ? propImages : ['https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&q=80&w=800'],
+      images: finalImages,
       videoUrl: propVideoUrl.trim() || undefined, isFeatured: propFeatured, status: propStatus,
       size: propSize, facing: propFacing,
       bedrooms: propCategory === 'cat-2' ? undefined : propBedrooms,
@@ -354,76 +357,227 @@ export default function AdminPanel({
         </div>
       </div>
 
-      {/* PROPERTY MODAL FORM (Kept inline for simplicity since it shares a lot of states) */}
+      {/* PROPERTY MODAL FORM */}
       {isPropertyFormOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="relative bg-white w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[88vh]">
-            <div className="sticky top-0 bg-slate-50 border-b px-6 py-4 flex items-center justify-between">
+            <div className="sticky top-0 bg-slate-50 border-b px-6 py-4 flex items-center justify-between z-10">
               <h3 className="text-sm font-bold text-[#0B2545]">{editingProperty ? 'প্রপার্টি সংশোধন' : 'নতুন প্রজেক্ট'}</h3>
-              <button onClick={() => setIsPropertyFormOpen(false)} className="h-8 w-8 rounded-full bg-slate-200/50 hover:bg-slate-200/80 flex items-center justify-center cursor-pointer"><X className="h-4.5 w-4.5" /></button>
+              <button onClick={() => setIsPropertyFormOpen(false)} className="h-8 w-8 rounded-full bg-slate-200/50 hover:bg-slate-200/80 flex items-center justify-center cursor-pointer transition-colors"><X className="h-4.5 w-4.5" /></button>
             </div>
             
             <div className="p-6 overflow-y-auto space-y-4 text-xs text-left">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2"><label className="block text-xs font-semibold mb-1">টাইটেল:</label><input type="text" value={propTitle} onChange={(e) => setPropTitle(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold mb-1">টাইটেল:</label>
+                  <input type="text" value={propTitle} onChange={(e) => setPropTitle(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+                
                 <div>
                   <label className="block text-xs font-semibold mb-1">ক্যাটাগরি:</label>
-                  <select value={propCategory} onChange={(e) => setPropCategory(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none">
+                  <select value={propCategory} onChange={(e) => setPropCategory(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]">
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
+                
                 <div>
                   <label className="block text-xs font-semibold mb-1">কোম্পানি:</label>
-                  <select value={propCompany} onChange={(e) => setPropCompany(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none">
+                  <select value={propCompany} onChange={(e) => setPropCompany(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]">
                     {companies.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
                   </select>
                 </div>
-                <div><label className="block text-xs font-semibold mb-1">লোকেশন:</label><input type="text" value={propLocation} onChange={(e) => setPropLocation(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
-                <div><label className="block text-xs font-semibold mb-1">মূল্য:</label><input type="text" value={propPrice} onChange={(e) => setPropPrice(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
-                <div><label className="block text-xs font-semibold mb-1">স্ট্যাটাস:</label><input type="text" value={propStatus} onChange={(e) => setPropStatus(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
-                <div><label className="block text-xs font-semibold mb-1">সাইজ:</label><input type="number" value={propSize} onChange={(e) => setPropSize(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
+                
+                <div>
+                  <label className="block text-xs font-semibold mb-1">লোকেশন:</label>
+                  <input type="text" value={propLocation} onChange={(e) => setPropLocation(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-semibold mb-1">মূল্য:</label>
+                  <input type="text" value={propPrice} onChange={(e) => setPropPrice(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-semibold mb-1">স্ট্যাটাস:</label>
+                  <input type="text" value={propStatus} onChange={(e) => setPropStatus(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-semibold mb-1">সাইজ:</label>
+                  <input type="number" value={propSize} onChange={(e) => setPropSize(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+
                 {propCategory !== 'cat-2' && (
                   <>
-                    <div><label className="block text-xs font-semibold mb-1">বেডরুম:</label><input type="number" value={propBedrooms} onChange={(e) => setPropBedrooms(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
-                    <div><label className="block text-xs font-semibold mb-1">বাথরুম:</label><input type="number" value={propBathrooms} onChange={(e) => setPropBathrooms(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">বেডরুম:</label>
+                      <input type="number" value={propBedrooms} onChange={(e) => setPropBedrooms(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">বাথরুম:</label>
+                      <input type="number" value={propBathrooms} onChange={(e) => setPropBathrooms(parseInt(e.target.value) || 0)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                    </div>
                   </>
                 )}
-                <div><label className="block text-xs font-semibold mb-1">দিক:</label><input type="text" value={propFacing} onChange={(e) => setPropFacing(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" /></div>
-                <div className="sm:col-span-2 flex items-center space-x-2 bg-slate-50 border p-3 rounded-xl">
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">দিক:</label>
+                  <input type="text" value={propFacing} onChange={(e) => setPropFacing(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" />
+                </div>
+                
+                <div className="sm:col-span-2 flex items-center space-x-2 bg-slate-50 border border-slate-200 p-3 rounded-xl">
                   <input type="checkbox" id="featured-checkbox" checked={propFeatured} onChange={(e) => setPropFeatured(e.target.checked)} className="cursor-pointer" />
-                  <label htmlFor="featured-checkbox" className="font-bold cursor-pointer">★ প্রিমিয়াম শোকেসে প্রদর্শন করুন</label>
+                  <label htmlFor="featured-checkbox" className="font-bold cursor-pointer text-slate-700">
+                    ★ প্রিমিয়াম শোকেসে প্রদর্শন করুন
+                  </label>
                 </div>
               </div>
 
-              <div className="bg-slate-50 border rounded-xl p-4.5 space-y-4">
-                <label className="block text-xs font-semibold">মিডিয়া ইউআরএল (ছবি/ভিডিও):</label>
-                <input type="text" value={propVideoUrl} onChange={(e) => setPropVideoUrl(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none mb-2" placeholder="ভিডিও URL (ঐচ্ছিক)" />
-                <div className="flex items-center gap-2">
-                  <input type="text" id="new-img-url" className="flex-1 rounded-xl border p-2.5 focus:outline-none" placeholder="ছবির URL যোগ করুন" />
-                  <button type="button" onClick={() => {
-                    const input = document.getElementById('new-img-url') as HTMLInputElement;
-                    if (input.value) { setPropImages([...propImages, input.value]); input.value = ''; }
-                  }} className="bg-[#0B2545] text-white px-3 py-2.5 rounded-xl cursor-pointer text-xs font-bold">যোগ</button>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {propImages.map((img, idx) => (
-                    <div key={idx} className="relative h-12 w-16 border rounded group overflow-hidden">
-                      <img src={img} className="h-full w-full object-cover" />
-                      <button type="button" onClick={() => setPropImages(propImages.filter((_, i) => i !== idx))} className="absolute inset-0 bg-red-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer"><X className="h-4 w-4"/></button>
-                    </div>
-                  ))}
+              {/* MEDIA SECTION - DEVICE UPLOADS ONLY */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4.5 space-y-4">
+                <label className="block text-xs font-semibold text-slate-700">প্রজেক্ট মিডিয়া (ডিভাইস থেকে আপলোড করুন):</label>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  
+                  {/* Image Upload Area */}
+                  <div className="space-y-2">
+                    <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-[#C9A84C] hover:bg-amber-50/50 rounded-xl p-4 text-xs font-semibold text-slate-600 bg-white cursor-pointer transition-all h-24">
+                      <ImageIcon className="h-5 w-5 text-slate-400" />
+                      <span className="text-center">ছবি নির্বাচন করুন<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ৫টি)</span></span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(e) => {
+                          if (e.target.files) {
+                            const filesArr = Array.from(e.target.files) as File[];
+                            const remainingCount = 5 - propImages.length;
+                            if (remainingCount <= 0) {
+                              alert('আপনি সর্বোচ্চ ৫টি ছবি আপলোড করতে পারবেন!');
+                              return;
+                            }
+                            const targetFiles = filesArr.slice(0, remainingCount);
+
+                            targetFiles.forEach((file) => {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                if (typeof reader.result === 'string') {
+                                  setPropImages(prev => {
+                                    if (prev.length < 5) return [...prev, reader.result as string];
+                                    return prev;
+                                  });
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {/* Image Previews */}
+                    {propImages.length > 0 && (
+                      <div className="flex flex-wrap gap-2 p-2 bg-white rounded-lg border border-slate-100 min-h-[68px]">
+                        {propImages.map((img, idx) => (
+                          <div key={idx} className="relative h-12 w-16 border border-slate-200 rounded-lg group overflow-hidden shadow-sm shrink-0">
+                            <img src={img} className="h-full w-full object-cover" />
+                            <button 
+                              type="button" 
+                              onClick={() => setPropImages(propImages.filter((_, i) => i !== idx))} 
+                              className="absolute inset-0 bg-rose-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
+                              title="মুছে ফেলুন"
+                            >
+                              <X className="h-4 w-4"/>
+                            </button>
+                            <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[8px] px-1 rounded-tl-sm">
+                              {idx + 1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Video Upload Area */}
+                  <div className="space-y-2">
+                    <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-[#C9A84C] hover:bg-amber-50/50 rounded-xl p-4 text-xs font-semibold text-slate-600 bg-white cursor-pointer transition-all h-24">
+                      <FileVideo className="h-5 w-5 text-slate-400" />
+                      <span className="text-center">ভিডিও নির্বাচন করুন<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ১টি)</span></span>
+                      <input
+                        type="file"
+                        accept="video/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (file.size > 20 * 1024 * 1024) { 
+                              alert('ভিডিওর সাইজ ২০ মেগাবাইটের বেশি হতে পারবে না!');
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                              if (typeof reader.result === 'string') {
+                                setPropVideoUrl(reader.result);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {/* Video Preview confirmation */}
+                    {propVideoUrl && (
+                      <div className="flex items-center justify-between p-2.5 bg-white rounded-lg border border-slate-100 shadow-sm min-h-[68px]">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <div className="h-10 w-12 bg-slate-900 rounded flex items-center justify-center text-white shrink-0 shadow-inner">
+                            <span className="text-[8px] font-sans font-bold">MP4</span>
+                          </div>
+                          <div className="truncate text-left leading-tight">
+                            <span className="text-[9px] font-black text-slate-700 uppercase block">ভিডিও সংযুক্ত</span>
+                            <span className="text-[8px] text-slate-400 truncate w-full block">ডিভাইস আপলোড (Base64)</span>
+                          </div>
+                        </div>
+                        <button 
+                          type="button" 
+                          onClick={() => setPropVideoUrl('')} 
+                          className="h-7 w-7 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                          title="ভিডিও মুছে ফেলুন"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold mb-1">বিবরণ:</label>
-                <textarea rows={4} value={propDesc} onChange={(e) => setPropDesc(e.target.value)} className="w-full rounded-xl border p-2.5 focus:outline-none" />
+                <textarea 
+                  rows={4} 
+                  value={propDesc} 
+                  onChange={(e) => setPropDesc(e.target.value)} 
+                  className="w-full rounded-xl border p-2.5 focus:outline-none focus:ring-1 focus:ring-[#0B2545]" 
+                />
               </div>
             </div>
 
             <div className="sticky bottom-0 bg-slate-50 border-t px-6 py-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setIsPropertyFormOpen(false)} className="rounded-xl border bg-white px-4 py-2 text-xs font-bold cursor-pointer">বাতিল</button>
-              <button type="button" onClick={handleSaveProperty} className="rounded-xl bg-[#0B2545] text-white px-5 py-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+              <button 
+                type="button" 
+                onClick={() => setIsPropertyFormOpen(false)} 
+                className="rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-5 py-2.5 text-xs font-bold cursor-pointer transition-colors"
+              >
+                বাতিল
+              </button>
+              <button 
+                type="button" 
+                onClick={handleSaveProperty} 
+                className="rounded-xl bg-[#0B2545] hover:bg-[#122e4e] text-white px-6 py-2.5 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+              >
                 <Save className="h-4 w-4" /><span>সেভ করুন</span>
               </button>
             </div>
