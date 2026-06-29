@@ -279,7 +279,8 @@ export default function AdminPanel({
 
   const handleToggleInquiryStatus = async (inq: Inquiry) => {
     const newStatus = inq.status === 'new' ? 'read' : 'new';
-    setInquiries(prev => prev.map(i => i.id === inq.id ? { ...i, status: newStatus } : i));
+    // Fix: Explicitly type 'prev' and 'i' as Inquiry
+    setInquiries((prev: Inquiry[]) => prev.map((i: Inquiry) => i.id === inq.id ? { ...i, status: newStatus } : i));
     await dbService.updateInquiryStatus(inq.id, newStatus);
   };
 
@@ -458,11 +459,12 @@ export default function AdminPanel({
                             }
                             const targetFiles = filesArr.slice(0, remainingCount);
 
-                            targetFiles.forEach((file) => {
+                            targetFiles.forEach((file: File) => {
                               const reader = new FileReader();
                               reader.onloadend = () => {
                                 if (typeof reader.result === 'string') {
-                                  setPropImages(prev => {
+                                  // Fix: Explicitly type 'prev' as string array
+                                  setPropImages((prev: string[]) => {
                                     if (prev.length < 5) return [...prev, reader.result as string];
                                     return prev;
                                   });
@@ -484,7 +486,8 @@ export default function AdminPanel({
                             <img src={img} className="h-full w-full object-cover" />
                             <button 
                               type="button" 
-                              onClick={() => setPropImages(propImages.filter((_, i) => i !== idx))} 
+                              // Fix: Explicitly type '_' as string and 'i' as number
+                              onClick={() => setPropImages(propImages.filter((_: string, i: number) => i !== idx))} 
                               className="absolute inset-0 bg-rose-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
                               title="মুছে ফেলুন"
                             >
