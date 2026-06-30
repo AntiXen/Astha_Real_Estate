@@ -9,60 +9,43 @@ const COMPANIES_KEY = 'ast_companies';
 const PROPERTIES_KEY = 'ast_properties';
 const INQUIRIES_KEY = 'ast_inquiries';
 const CACHE_TIMESTAMP_KEY = 'ast_cache_timestamp';
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
 
 function logSupabaseError(operation: string, error: any) {
   if (!error) return;
-  console.error(`[dbService] Supabase error during ${operation}:`, error.message || error);
+  console.warn(`[dbService] Supabase error during ${operation}:`, error);
 }
 
-// 🛡️ CRASH PROOFING: Ensure cache poisoning (null) never breaks the app
 function readLocalItem<T>(key: string, fallback: T): T {
   const raw = localStorage.getItem(key);
   if (!raw) return fallback;
   try {
-    const parsed = JSON.parse(raw);
-    // If parsed is null/empty, force the fallback
-    if (!parsed) return fallback;
-    
-    // If it expects an array but gets an object (or vice versa), force fallback
-    if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback;
-    if (typeof fallback === 'object' && !Array.isArray(fallback) && typeof parsed !== 'object') return fallback;
-    
-    return parsed as T;
+    return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
 }
 
 function writeLocalItem<T>(key: string, value: T): void {
-  if (!value) return; // Never save a null value to cache
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    // localStorage has a hard ~5-10MB per-origin quota. When Supabase is
+    // enabled, this cache is only a fallback for offline/error scenarios,
+    // never the source of truth -- so a failed write here must NOT block
+    // the rest of the app. (Previously this threw uncaught and the whole
+    // app hung on the loading screen.)
+    console.warn(`[dbService] Could not cache "${key}" to localStorage (likely quota exceeded):`, err);
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function updateCacheTimestamp() {
   localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-}
-
-// 🛡️ Supabase strict JSON requires matching keys for bulk array upserts.
-// This strips out Postgres timestamps and converts `undefined` to `null`.
-function sanitizePayload(data: any | any[]) {
-  if (!data) return data;
-  if (Array.isArray(data)) {
-    return data.map(item => {
-      const { inserted_at, updated_at, ...rest } = item;
-      const cleaned: any = {};
-      for (const key in rest) {
-        cleaned[key] = rest[key] === undefined ? null : rest[key];
-      }
-      return cleaned;
-    });
-  }
-  const { inserted_at, updated_at, ...rest } = data;
-  const cleaned: any = {};
-  for (const key in rest) {
-    cleaned[key] = rest[key] === undefined ? null : rest[key];
-  }
-  return cleaned;
 }
 
 export const dbService = {
@@ -78,7 +61,7 @@ export const dbService = {
       logSupabaseError('getSettings', error);
       
       if (error?.code === 'PGRST116') { // No rows found
-        await this.initializeSettings();
+        await dbService.initializeSettings();
         return defaultSettings;
       }
     }
@@ -87,20 +70,16 @@ export const dbService = {
 
   async initializeSettings(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(defaultSettings);
-      const { error } = await supabase.from('site_settings').insert(payload);
-      if (error && error.code !== '23505') logSupabaseError('initializeSettings', error);
+      const { error: insertError } = await supabase.from('site_settings').insert(defaultSettings).select().single();
+      if (insertError && insertError.code !== '23505') logSupabaseError('initializeSettings', insertError);
     }
   },
 
   async saveSettings(settings: SiteSettings): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(settings);
-      const { error } = await supabase.from('site_settings').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        logSupabaseError('saveSettings', error);
-        return;
-      }
+      const { error } = await supabase.from('site_settings').upsert(settings, { onConflict: 'id' }).select();
+      if (!error) return;
+      logSupabaseError('saveSettings', error);
     }
     writeLocalItem(SETTINGS_KEY, settings);
   },
@@ -114,27 +93,23 @@ export const dbService = {
         return data as Category[];
       }
       logSupabaseError('getCategories', error);
-      if (data?.length === 0 || error?.code === 'PGRST116') await this.initializeCategories();
+      if (data?.length === 0) await dbService.initializeCategories();
     }
     return readLocalItem<Category[]>(CATEGORIES_KEY, defaultCategories);
   },
 
   async initializeCategories(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(defaultCategories);
-      const { error } = await supabase.from('categories').insert(payload);
+      const { error } = await supabase.from('categories').insert(defaultCategories).select();
       if (error && error.code !== '23505') logSupabaseError('initializeCategories', error);
     }
   },
 
   async saveCategories(categories: Category[]): Promise<Category[]> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(categories);
-      const { error } = await supabase.from('categories').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        logSupabaseError('saveCategories', error);
-        return categories;
-      }
+      const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id' }).select();
+      if (!error) return categories;
+      logSupabaseError('saveCategories', error);
     }
     writeLocalItem(CATEGORIES_KEY, categories);
     return categories;
@@ -155,7 +130,7 @@ export const dbService = {
     return filtered;
   },
 
-  // --- Companies ---
+  // --- Companies (Developers) ---
   async getCompanies(): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('companies').select('*');
@@ -164,27 +139,23 @@ export const dbService = {
         return data as Company[];
       }
       logSupabaseError('getCompanies', error);
-      if (data?.length === 0 || error?.code === 'PGRST116') await this.initializeCompanies();
+      if (data?.length === 0) await dbService.initializeCompanies();
     }
     return readLocalItem<Company[]>(COMPANIES_KEY, defaultCompanies);
   },
 
   async initializeCompanies(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(defaultCompanies);
-      const { error } = await supabase.from('companies').insert(payload);
+      const { error } = await supabase.from('companies').insert(defaultCompanies).select();
       if (error && error.code !== '23505') logSupabaseError('initializeCompanies', error);
     }
   },
 
   async saveCompanies(companies: Company[]): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(companies);
-      const { error } = await supabase.from('companies').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        logSupabaseError('saveCompanies', error);
-        return companies;
-      }
+      const { error } = await supabase.from('companies').upsert(companies, { onConflict: 'id' }).select();
+      if (!error) return companies;
+      logSupabaseError('saveCompanies', error);
     }
     writeLocalItem(COMPANIES_KEY, companies);
     return companies;
@@ -208,21 +179,20 @@ export const dbService = {
   // --- Properties ---
   async getProperties(): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('properties').select('*').order('inserted_at', { ascending: false });
+      const { data, error } = await supabase.from('properties').select('*');
       if (!error && data) {
         writeLocalItem(PROPERTIES_KEY, data);
         return data as Property[];
       }
       logSupabaseError('getProperties', error);
-      if (data?.length === 0 || error?.code === 'PGRST116') await this.initializeProperties();
+      if (data?.length === 0) await dbService.initializeProperties();
     }
     return readLocalItem<Property[]>(PROPERTIES_KEY, defaultProperties);
   },
 
   async initializeProperties(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(defaultProperties);
-      const { error } = await supabase.from('properties').insert(payload);
+      const { error } = await supabase.from('properties').insert(defaultProperties).select();
       if (error && error.code !== '23505') logSupabaseError('initializeProperties', error);
     }
   },
@@ -234,12 +204,9 @@ export const dbService = {
 
   async saveProperties(properties: Property[]): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(properties);
-      const { error } = await supabase.from('properties').upsert(payload, { onConflict: 'id' });
-      if (error) {
-        logSupabaseError('saveProperties', error);
-        return properties;
-      }
+      const { error } = await supabase.from('properties').upsert(properties, { onConflict: 'id' }).select();
+      if (!error) return properties;
+      logSupabaseError('saveProperties', error);
     }
     writeLocalItem(PROPERTIES_KEY, properties);
     return properties;
@@ -260,7 +227,7 @@ export const dbService = {
     return filtered;
   },
 
-  // --- Inquiries ---
+  // --- Inquiries (Leads) ---
   async getInquiries(): Promise<Inquiry[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
@@ -275,13 +242,13 @@ export const dbService = {
 
   async saveInquiry(inquiryData: Omit<Inquiry, 'id' | 'created_at'>): Promise<Inquiry | null> {
     if (isSupabaseEnabled && supabase) {
-      const payload = sanitizePayload(inquiryData);
-      const { data, error } = await supabase.from('inquiries').insert([payload]).select().single();
+      const { data, error } = await supabase.from('inquiries').insert([inquiryData]).select().single();
       if (!error && data) return data as Inquiry;
       logSupabaseError('saveInquiry', error);
       return null;
     }
     
+    // Local storage fallback
     const inquiries = await this.getInquiries();
     const newInquiry: Inquiry = {
       ...inquiryData,
@@ -304,7 +271,7 @@ export const dbService = {
     writeLocalItem(INQUIRIES_KEY, updated);
   },
 
-  // --- Admin functions ---
+  // Reset helper to revert database back to original defaults
   async resetToDefaults(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
       await supabase.from('properties').delete().neq('id', '0');
@@ -313,11 +280,11 @@ export const dbService = {
       await supabase.from('inquiries').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       
       await supabase.from('site_settings').delete().neq('id', '0');
-      await supabase.from('site_settings').insert(sanitizePayload(defaultSettings));
+      await supabase.from('site_settings').insert(defaultSettings);
       
-      await supabase.from('categories').insert(sanitizePayload(defaultCategories));
-      await supabase.from('companies').insert(sanitizePayload(defaultCompanies));
-      await supabase.from('properties').insert(sanitizePayload(defaultProperties));
+      await supabase.from('categories').insert(defaultCategories);
+      await supabase.from('companies').insert(defaultCompanies);
+      await supabase.from('properties').insert(defaultProperties);
       return;
     }
 
@@ -328,26 +295,27 @@ export const dbService = {
     writeLocalItem(INQUIRIES_KEY, []);
   },
 
+  // Initialize database with default data if tables are empty
   async initialize(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
       const { data: settingsData } = await supabase.from('site_settings').select('id').eq('id', 'default').single();
       if (!settingsData) {
-        await supabase.from('site_settings').insert(sanitizePayload(defaultSettings));
+        await supabase.from('site_settings').insert(defaultSettings);
       }
 
       const { data: categoriesData } = await supabase.from('categories').select('id').limit(1);
       if (!categoriesData || categoriesData.length === 0) {
-        await supabase.from('categories').insert(sanitizePayload(defaultCategories));
+        await supabase.from('categories').insert(defaultCategories);
       }
 
       const { data: companiesData } = await supabase.from('companies').select('id').limit(1);
       if (!companiesData || companiesData.length === 0) {
-        await supabase.from('companies').insert(sanitizePayload(defaultCompanies));
+        await supabase.from('companies').insert(defaultCompanies);
       }
 
       const { data: propertiesData } = await supabase.from('properties').select('id').limit(1);
       if (!propertiesData || propertiesData.length === 0) {
-        await supabase.from('properties').insert(sanitizePayload(defaultProperties));
+        await supabase.from('properties').insert(defaultProperties);
       }
     }
   }

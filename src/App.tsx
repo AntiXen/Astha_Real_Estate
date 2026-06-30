@@ -69,6 +69,7 @@ export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Navigation state
   const [viewState, setViewState] = useState<RouteState>({ page: 'home', propertyId: null });
@@ -98,24 +99,56 @@ export default function App() {
   const [testimonialUserHasLiked, setTestimonialUserHasLiked] = useState<{ [key: number]: boolean }>({});
   const [selectedTestimonial, setSelectedTestimonial] = useState<any | null>(null);
 
-  // Load database entities
+  // Load database entities.
+  //
+  // IMPORTANT: each fetch sets its own state immediately, instead of
+  // collecting all four results into local variables and calling every
+  // setState at the end. With the old "all-or-nothing" approach, a single
+  // failing fetch (e.g. getProperties() throwing) meant setSettings() was
+  // NEVER called -- and since the loading guard below is
+  // `if (loading || !settings)`, the app would stay on the spinner
+  // forever even after `loading` was set to false in `finally`, because
+  // `settings` stayed null. Setting state per-fetch means one failure
+  // can no longer take down the whole page.
   const loadDatabase = async () => {
+    setLoadError(null);
     try {
       await dbService.initialize();
-      const s = await dbService.getSettings();
-      const cat = await dbService.getCategories();
-      const comp = await dbService.getCompanies();
-      const prop = await dbService.getProperties();
+    } catch (err) {
+      console.error('Database init error:', err);
+    }
 
+    try {
+      const s = await dbService.getSettings();
       setSettings(s);
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+      setLoadError('সাইট সেটিংস লোড করা যায়নি। আবার চেষ্টা করুন।');
+    }
+
+    try {
+      const cat = await dbService.getCategories();
       setCategories(cat);
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+    }
+
+    try {
+      const comp = await dbService.getCompanies();
       setCompanies(comp);
+    } catch (err) {
+      console.error('Failed to load companies:', err);
+    }
+
+    try {
+      const prop = await dbService.getProperties();
       setProperties(prop);
     } catch (err) {
-      console.error("Database load error: ", err);
-    } finally {
-      setLoading(false);
+      console.error('Failed to load properties:', err);
+      setLoadError((prev) => prev ?? 'প্রপার্টি লোড করা যায়নি। আবার চেষ্টা করুন।');
     }
+
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -236,12 +269,30 @@ export default function App() {
     return matchesSearch && matchesCategory && matchesCompany;
   });
 
-  if (loading || !settings) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#05162E] font-bengali">
         <div className="text-center space-y-3">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#D4AF37] border-t-transparent mx-auto"></div>
           <p className="text-sm font-semibold text-[#D4AF37] gold-glow px-4 py-1.5 rounded-full bg-white/5 border border-white/10 uppercase tracking-wider">আস্থার ঠিকানা ডাটাবেজ লোড হচ্ছে...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#05162E] font-bengali">
+        <div className="text-center space-y-4 max-w-sm px-4">
+          <p className="text-sm font-semibold text-red-400 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
+            {loadError || 'সাইট লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।'}
+          </p>
+          <button
+            onClick={() => { setLoading(true); loadDatabase(); }}
+            className="px-5 py-2 rounded-full bg-[#D4AF37] text-[#05162E] font-semibold text-sm hover:opacity-90 transition"
+          >
+            আবার চেষ্টা করুন
+          </button>
         </div>
       </div>
     );
