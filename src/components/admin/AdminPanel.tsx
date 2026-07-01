@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Save, X, Upload, FileVideo, Image as ImageIcon } from 'lucide-react';
+import { LogOut, Save, X, Upload, FileVideo, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { SiteSettings, Category, Company, Property, Inquiry } from '../../types';
 import { getCurrentAdmin, initializeLocalAdmins, getAdminUsers, createSubAdmin, deleteAdminUser, signOutAdmin } from '../../services/auth';
 import { dbService } from '../../services/db';
+import { uploadPropertyImage, uploadPropertyVideo, deleteStorageFileByUrl } from '../../services/storage';
 
 // Import our modular views
 import AuthGate from './AuthGate';
@@ -96,6 +97,11 @@ export default function AdminPanel({
   const [propBathrooms, setPropBathrooms] = useState<number>(3);
   const [propFacing, setPropFacing] = useState<string>('দক্ষিণমুখী');
   const [propFeatured, setPropFeatured] = useState<boolean>(false);
+
+  // --- Uploading States ---
+  const [isUploadingImage, setIsUploadingImage] = useState<boolean>(false);
+  const [isUploadingVideo, setIsUploadingVideo] = useState<boolean>(false);
+  const [mediaError, setMediaError] = useState<string>('');
 
   // --- Initialization & Data Fetching ---
   useEffect(() => {
@@ -212,6 +218,7 @@ export default function AdminPanel({
     setPropImages([]); setPropVideoUrl(''); setPropStatus('সক্রিয়');
     setPropSize(1800); setPropBedrooms(3); setPropBathrooms(3);
     setPropFacing('দক্ষিণমুখী'); setPropFeatured(false);
+    setMediaError('');
     setIsPropertyFormOpen(true);
   };
 
@@ -222,6 +229,7 @@ export default function AdminPanel({
     setPropImages(p.images || []); setPropVideoUrl(p.videoUrl || ''); setPropStatus(p.status);
     setPropSize(p.size || 2000); setPropBedrooms(p.bedrooms || 3); setPropBathrooms(p.bathrooms || 3);
     setPropFacing(p.facing || 'দক্ষিণমুখী'); setPropFeatured(p.isFeatured);
+    setMediaError('');
     setIsPropertyFormOpen(true);
   };
 
@@ -279,12 +287,10 @@ export default function AdminPanel({
 
   const handleToggleInquiryStatus = async (inq: Inquiry) => {
     const newStatus = inq.status === 'new' ? 'read' : 'new';
-    // Fix: Explicitly type 'prev' and 'i' as Inquiry
     setInquiries((prev: Inquiry[]) => prev.map((i: Inquiry) => i.id === inq.id ? { ...i, status: newStatus } : i));
     await dbService.updateInquiryStatus(inq.id, newStatus);
   };
 
-  // --- Auth Gate check ---
   if (!isAuthenticated) {
     return (
       <AuthGate 
@@ -443,15 +449,20 @@ export default function AdminPanel({
                   {/* Image Upload Area */}
                   <div className="space-y-2">
                     <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-[#C9A84C] hover:bg-amber-50/50 rounded-xl p-4 text-xs font-semibold text-slate-600 bg-white cursor-pointer transition-all h-24">
-                      <ImageIcon className="h-5 w-5 text-slate-400" />
-                      <span className="text-center">ছবি নির্বাচন করুন<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ৫টি)</span></span>
+                      {isUploadingImage ? (
+                        <Loader2 className="h-5 w-5 text-[#C9A84C] animate-spin" />
+                      ) : (
+                        <ImageIcon className="h-5 w-5 text-slate-400" />
+                      )}
+                      <span className="text-center">{isUploadingImage ? 'ছবি আপলোড হচ্ছে...' : 'ছবি নির্বাচন করুন'}<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ৫টি)</span></span>
                       <input
                         type="file"
                         accept="image/*"
                         multiple
-                        onChange={(e) => {
+                        disabled={isUploadingImage}
+                        onChange={async (e) => {
                           if (e.target.files) {
-                            const filesArr = Array.from(e.target.files) as File[];
+                            const filesArr = Array.from(e.target.files);
                             const remainingCount = 5 - propImages.length;
                             if (remainingCount <= 0) {
                               alert('আপনি সর্বোচ্চ ৫টি ছবি আপলোড করতে পারবেন!');
@@ -459,19 +470,18 @@ export default function AdminPanel({
                             }
                             const targetFiles = filesArr.slice(0, remainingCount);
 
-                            targetFiles.forEach((file: File) => {
-                              const reader = new FileReader();
-                              reader.onloadend = () => {
-                                if (typeof reader.result === 'string') {
-                                  // Fix: Explicitly type 'prev' as string array
-                                  setPropImages((prev: string[]) => {
-                                    if (prev.length < 5) return [...prev, reader.result as string];
-                                    return prev;
-                                  });
-                                }
-                              };
-                              reader.readAsDataURL(file);
-                            });
+                            setMediaError('');
+                            setIsUploadingImage(true);
+                            try {
+                              for (const file of targetFiles) {
+                                const url = await uploadPropertyImage(file);
+                                setPropImages((prev: string[]) => (prev.length < 5 ? [...prev, url] : prev));
+                              }
+                            } catch (err: any) {
+                              setMediaError(err?.message || 'ছবি আপলোড ব্যর্থ হয়েছে।');
+                            } finally {
+                              setIsUploadingImage(false);
+                            }
                           }
                         }}
                         className="hidden"
@@ -486,8 +496,11 @@ export default function AdminPanel({
                             <img src={img} className="h-full w-full object-cover" />
                             <button 
                               type="button" 
-                              // Fix: Explicitly type '_' as string and 'i' as number
-                              onClick={() => setPropImages(propImages.filter((_: string, i: number) => i !== idx))} 
+                              onClick={() => {
+                                const removed = propImages[idx];
+                                setPropImages(propImages.filter((_, i) => i !== idx));
+                                deleteStorageFileByUrl(removed).catch(() => {});
+                              }} 
                               className="absolute inset-0 bg-rose-500/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
                               title="মুছে ফেলুন"
                             >
@@ -505,25 +518,33 @@ export default function AdminPanel({
                   {/* Video Upload Area */}
                   <div className="space-y-2">
                     <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-slate-300 hover:border-[#C9A84C] hover:bg-amber-50/50 rounded-xl p-4 text-xs font-semibold text-slate-600 bg-white cursor-pointer transition-all h-24">
-                      <FileVideo className="h-5 w-5 text-slate-400" />
-                      <span className="text-center">ভিডিও নির্বাচন করুন<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ১টি)</span></span>
+                      {isUploadingVideo ? (
+                        <Loader2 className="h-5 w-5 text-[#C9A84C] animate-spin" />
+                      ) : (
+                        <FileVideo className="h-5 w-5 text-slate-400" />
+                      )}
+                      <span className="text-center">{isUploadingVideo ? 'ভিডিও আপলোড হচ্ছে...' : 'ভিডিও নির্বাচন করুন'}<br/><span className="text-[9px] font-normal text-slate-400">(সর্বোচ্চ ১টি)</span></span>
                       <input
                         type="file"
                         accept="video/*"
-                        onChange={(e) => {
+                        disabled={isUploadingVideo}
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (file) {
                             if (file.size > 20 * 1024 * 1024) { 
                               alert('ভিডিওর সাইজ ২০ মেগাবাইটের বেশি হতে পারবে না!');
                               return;
                             }
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              if (typeof reader.result === 'string') {
-                                setPropVideoUrl(reader.result);
-                              }
-                            };
-                            reader.readAsDataURL(file);
+                            setMediaError('');
+                            setIsUploadingVideo(true);
+                            try {
+                              const url = await uploadPropertyVideo(file);
+                              setPropVideoUrl(url);
+                            } catch (err: any) {
+                              setMediaError(err?.message || 'ভিডিও আপলোড ব্যর্থ হয়েছে।');
+                            } finally {
+                              setIsUploadingVideo(false);
+                            }
                           }
                         }}
                         className="hidden"
@@ -544,7 +565,11 @@ export default function AdminPanel({
                         </div>
                         <button 
                           type="button" 
-                          onClick={() => setPropVideoUrl('')} 
+                          onClick={() => {
+                            const removed = propVideoUrl;
+                            setPropVideoUrl('');
+                            deleteStorageFileByUrl(removed).catch(() => {});
+                          }} 
                           className="h-7 w-7 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                           title="ভিডিও মুছে ফেলুন"
                         >
@@ -556,6 +581,14 @@ export default function AdminPanel({
 
                 </div>
               </div>
+
+              {/* Status / Error Row */}
+              {(isUploadingImage || isUploadingVideo) && (
+                <p className="text-[10px] text-amber-600 font-semibold mt-1">আপলোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</p>
+              )}
+              {mediaError && (
+                <p className="text-[10px] text-rose-600 font-semibold mt-1">{mediaError}</p>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold mb-1">বিবরণ:</label>
