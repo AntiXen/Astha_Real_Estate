@@ -9,32 +9,35 @@ const COMPANIES_KEY = 'ast_companies';
 const PROPERTIES_KEY = 'ast_properties';
 const INQUIRIES_KEY = 'ast_inquiries';
 const CACHE_TIMESTAMP_KEY = 'ast_cache_timestamp';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
 
 function logSupabaseError(operation: string, error: any) {
   if (!error) return;
-  console.warn(`[dbService] Supabase error during ${operation}:`, error);
+  console.error(`[dbService] Supabase error during ${operation}:`, error.message || error);
 }
 
+// 🛡️ CRASH PROOFING: Ensure cache poisoning (null) never breaks the app
 function readLocalItem<T>(key: string, fallback: T): T {
   const raw = localStorage.getItem(key);
   if (!raw) return fallback;
   try {
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return fallback;
+    
+    // Type checking against fallback structures
+    if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback;
+    if (typeof fallback === 'object' && !Array.isArray(fallback) && typeof parsed !== 'object') return fallback;
+    
+    return parsed as T;
   } catch {
     return fallback;
   }
 }
 
 function writeLocalItem<T>(key: string, value: T): void {
+  if (!value) return;
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
-    // localStorage has a hard ~5-10MB per-origin quota. When Supabase is
-    // enabled, this cache is only a fallback for offline/error scenarios,
-    // never the source of truth -- so a failed write here must NOT block
-    // the rest of the app. (Previously this threw uncaught and the whole
-    // app hung on the loading screen.)
     console.warn(`[dbService] Could not cache "${key}" to localStorage (likely quota exceeded):`, err);
     try {
       localStorage.removeItem(key);
@@ -46,6 +49,26 @@ function writeLocalItem<T>(key: string, value: T): void {
 
 function updateCacheTimestamp() {
   localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+}
+
+// 🛡️ Payload Normalizer: Ensures Supabase upsert arrays have identical keys 
+// and filters out local undefined values that cause SQL syntax failures.
+function sanitizePayload(data: any): any {
+  if (!data) return data;
+  
+  const cleanObject = (obj: any) => {
+    const { inserted_at, updated_at, ...rest } = obj;
+    const cleaned: any = {};
+    for (const key of Object.keys(rest)) {
+      cleaned[key] = rest[key] === undefined ? null : rest[key];
+    }
+    return cleaned;
+  };
+
+  if (Array.isArray(data)) {
+    return data.map(cleanObject);
+  }
+  return cleanObject(data);
 }
 
 export const dbService = {
@@ -64,22 +87,31 @@ export const dbService = {
         await dbService.initializeSettings();
         return defaultSettings;
       }
+      
+      // If any error other than PGRST116 occurs, propagate it to prevent stale local cache masking
+      throw new Error(`Supabase settings fetch failed: ${error?.message || JSON.stringify(error)}`);
     }
     return readLocalItem<SiteSettings>(SETTINGS_KEY, defaultSettings);
   },
 
   async initializeSettings(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error: insertError } = await supabase.from('site_settings').insert(defaultSettings).select().single();
-      if (insertError && insertError.code !== '23505') logSupabaseError('initializeSettings', insertError);
+      const payload = sanitizePayload(defaultSettings);
+      const { error } = await supabase.from('site_settings').insert(payload);
+      if (error && error.code !== '23505') {
+        logSupabaseError('initializeSettings', error);
+      }
     }
   },
 
   async saveSettings(settings: SiteSettings): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('site_settings').upsert(settings, { onConflict: 'id' }).select();
-      if (!error) return;
-      logSupabaseError('saveSettings', error);
+      const payload = sanitizePayload(settings);
+      const { error } = await supabase.from('site_settings').upsert(payload, { onConflict: 'id' }).select();
+      if (error) {
+        logSupabaseError('saveSettings', error);
+        throw new Error(`Settings save failed: ${error?.message || 'Unknown error'}`);
+      }
     }
     writeLocalItem(SETTINGS_KEY, settings);
   },
@@ -88,28 +120,39 @@ export const dbService = {
   async getCategories(): Promise<Category[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('categories').select('*');
-      if (!error && data) {
+      if (error) {
+        logSupabaseError('getCategories', error);
+        throw new Error(`Supabase categories fetch failed: ${error?.message || 'Unknown error'}`);
+      }
+      
+      if (data && data.length > 0) {
         writeLocalItem(CATEGORIES_KEY, data);
         return data as Category[];
       }
-      logSupabaseError('getCategories', error);
-      if (data?.length === 0) await dbService.initializeCategories();
+      
+      // Seed categories server-side if completely empty
+      await dbService.initializeCategories();
+      return defaultCategories;
     }
     return readLocalItem<Category[]>(CATEGORIES_KEY, defaultCategories);
   },
 
   async initializeCategories(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').insert(defaultCategories).select();
+      const payload = sanitizePayload(defaultCategories);
+      const { error } = await supabase.from('categories').insert(payload);
       if (error && error.code !== '23505') logSupabaseError('initializeCategories', error);
     }
   },
 
   async saveCategories(categories: Category[]): Promise<Category[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id' }).select();
-      if (!error) return categories;
-      logSupabaseError('saveCategories', error);
+      const payload = sanitizePayload(categories);
+      const { error } = await supabase.from('categories').upsert(payload, { onConflict: 'id' }).select();
+      if (error) {
+        logSupabaseError('saveCategories', error);
+        throw new Error(`Categories save failed: ${error?.message || 'Unknown error'}`);
+      }
     }
     writeLocalItem(CATEGORIES_KEY, categories);
     return categories;
@@ -118,11 +161,11 @@ export const dbService = {
   async deleteCategory(id: string): Promise<Category[]> {
     if (isSupabaseEnabled && supabase) {
       const { error } = await supabase.from('categories').delete().eq('id', id);
-      if (!error) {
-        const categories = await this.getCategories();
-        return categories.filter((category) => category.id !== id);
+      if (error) {
+        logSupabaseError('deleteCategory', error);
+        throw new Error(`Category deletion failed: ${error?.message || 'Unknown error'}`);
       }
-      logSupabaseError('deleteCategory', error);
+      return await this.getCategories();
     }
     const categories = await this.getCategories();
     const filtered = categories.filter((c) => c.id !== id);
@@ -134,28 +177,39 @@ export const dbService = {
   async getCompanies(): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('companies').select('*');
-      if (!error && data) {
+      if (error) {
+        logSupabaseError('getCompanies', error);
+        throw new Error(`Supabase companies fetch failed: ${error?.message || 'Unknown error'}`);
+      }
+      
+      if (data && data.length > 0) {
         writeLocalItem(COMPANIES_KEY, data);
         return data as Company[];
       }
-      logSupabaseError('getCompanies', error);
-      if (data?.length === 0) await dbService.initializeCompanies();
+      
+      // Seed companies server-side if completely empty
+      await dbService.initializeCompanies();
+      return defaultCompanies;
     }
     return readLocalItem<Company[]>(COMPANIES_KEY, defaultCompanies);
   },
 
   async initializeCompanies(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').insert(defaultCompanies).select();
+      const payload = sanitizePayload(defaultCompanies);
+      const { error } = await supabase.from('companies').insert(payload);
       if (error && error.code !== '23505') logSupabaseError('initializeCompanies', error);
     }
   },
 
   async saveCompanies(companies: Company[]): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').upsert(companies, { onConflict: 'id' }).select();
-      if (!error) return companies;
-      logSupabaseError('saveCompanies', error);
+      const payload = sanitizePayload(companies);
+      const { error } = await supabase.from('companies').upsert(payload, { onConflict: 'id' }).select();
+      if (error) {
+        logSupabaseError('saveCompanies', error);
+        throw new Error(`Companies save failed: ${error?.message || 'Unknown error'}`);
+      }
     }
     writeLocalItem(COMPANIES_KEY, companies);
     return companies;
@@ -164,11 +218,11 @@ export const dbService = {
   async deleteCompany(id: string): Promise<Company[]> {
     if (isSupabaseEnabled && supabase) {
       const { error } = await supabase.from('companies').delete().eq('id', id);
-      if (!error) {
-        const companies = await this.getCompanies();
-        return companies.filter((company) => company.id !== id);
+      if (error) {
+        logSupabaseError('deleteCompany', error);
+        throw new Error(`Company deletion failed: ${error?.message || 'Unknown error'}`);
       }
-      logSupabaseError('deleteCompany', error);
+      return await this.getCompanies();
     }
     const companies = await this.getCompanies();
     const filtered = companies.filter((c) => c.id !== id);
@@ -180,19 +234,27 @@ export const dbService = {
   async getProperties(): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('properties').select('*');
-      if (!error && data) {
+      if (error) {
+        logSupabaseError('getProperties', error);
+        throw new Error(`Supabase properties fetch failed: ${error?.message || 'Unknown error'}`);
+      }
+      
+      if (data && data.length > 0) {
         writeLocalItem(PROPERTIES_KEY, data);
         return data as Property[];
       }
-      logSupabaseError('getProperties', error);
-      if (data?.length === 0) await dbService.initializeProperties();
+      
+      // Seed properties server-side if completely empty
+      await dbService.initializeProperties();
+      return defaultProperties;
     }
     return readLocalItem<Property[]>(PROPERTIES_KEY, defaultProperties);
   },
 
   async initializeProperties(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').insert(defaultProperties).select();
+      const payload = sanitizePayload(defaultProperties);
+      const { error } = await supabase.from('properties').insert(payload);
       if (error && error.code !== '23505') logSupabaseError('initializeProperties', error);
     }
   },
@@ -204,9 +266,12 @@ export const dbService = {
 
   async saveProperties(properties: Property[]): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').upsert(properties, { onConflict: 'id' }).select();
-      if (!error) return properties;
-      logSupabaseError('saveProperties', error);
+      const payload = sanitizePayload(properties);
+      const { error } = await supabase.from('properties').upsert(payload, { onConflict: 'id' }).select();
+      if (error) {
+        logSupabaseError('saveProperties', error);
+        throw new Error(`Properties save failed: ${error?.message || 'Unknown error'}`);
+      }
     }
     writeLocalItem(PROPERTIES_KEY, properties);
     return properties;
@@ -215,11 +280,11 @@ export const dbService = {
   async deleteProperty(id: string): Promise<Property[]> {
     if (isSupabaseEnabled && supabase) {
       const { error } = await supabase.from('properties').delete().eq('id', id);
-      if (!error) {
-        const properties = await this.getProperties();
-        return properties.filter((property) => property.id !== id);
+      if (error) {
+        logSupabaseError('deleteProperty', error);
+        throw new Error(`Property deletion failed: ${error?.message || 'Unknown error'}`);
       }
-      logSupabaseError('deleteProperty', error);
+      return await this.getProperties();
     }
     const properties = await this.getProperties();
     const filtered = properties.filter((p) => p.id !== id);
@@ -231,21 +296,25 @@ export const dbService = {
   async getInquiries(): Promise<Inquiry[]> {
     if (isSupabaseEnabled && supabase) {
       const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        writeLocalItem(INQUIRIES_KEY, data);
-        return data as Inquiry[];
+      if (error) {
+        logSupabaseError('getInquiries', error);
+        throw new Error(`Supabase inquiries fetch failed: ${error?.message || 'Unknown error'}`);
       }
-      logSupabaseError('getInquiries', error);
+      writeLocalItem(INQUIRIES_KEY, data || []);
+      return (data || []) as Inquiry[];
     }
     return readLocalItem<Inquiry[]>(INQUIRIES_KEY, []);
   },
 
   async saveInquiry(inquiryData: Omit<Inquiry, 'id' | 'created_at'>): Promise<Inquiry | null> {
     if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('inquiries').insert([inquiryData]).select().single();
-      if (!error && data) return data as Inquiry;
-      logSupabaseError('saveInquiry', error);
-      return null;
+      const payload = sanitizePayload(inquiryData);
+      const { data, error } = await supabase.from('inquiries').insert([payload]).select().single();
+      if (error) {
+        logSupabaseError('saveInquiry', error);
+        throw new Error(`Inquiry submission failed: ${error?.message || 'Unknown error'}`);
+      }
+      return data as Inquiry;
     }
     
     // Local storage fallback
@@ -263,7 +332,10 @@ export const dbService = {
   async updateInquiryStatus(id: string, status: 'new' | 'read'): Promise<void> {
     if (isSupabaseEnabled && supabase) {
       const { error } = await supabase.from('inquiries').update({ status }).eq('id', id);
-      if (error) logSupabaseError('updateInquiryStatus', error);
+      if (error) {
+        logSupabaseError('updateInquiryStatus', error);
+        throw new Error(`Inquiry update failed: ${error?.message || 'Unknown error'}`);
+      }
     }
     
     const inquiries = await this.getInquiries();
@@ -274,17 +346,16 @@ export const dbService = {
   // Reset helper to revert database back to original defaults
   async resetToDefaults(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      await supabase.from('properties').delete().neq('id', '0');
-      await supabase.from('companies').delete().neq('id', '0');
-      await supabase.from('categories').delete().neq('id', '0');
-      await supabase.from('inquiries').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      
-      await supabase.from('site_settings').delete().neq('id', '0');
-      await supabase.from('site_settings').insert(defaultSettings);
-      
-      await supabase.from('categories').insert(defaultCategories);
-      await supabase.from('companies').insert(defaultCompanies);
-      await supabase.from('properties').insert(defaultProperties);
+      const { error } = await supabase.rpc('reset_to_defaults_rpc', {
+        default_settings_json: sanitizePayload(defaultSettings),
+        default_categories_json: sanitizePayload(defaultCategories),
+        default_companies_json: sanitizePayload(defaultCompanies),
+        default_properties_json: sanitizePayload(defaultProperties)
+      });
+      if (error) {
+        logSupabaseError('resetToDefaults', error);
+        throw new Error(`System reset failed: ${error?.message || 'Unknown error'}`);
+      }
       return;
     }
 
@@ -298,24 +369,16 @@ export const dbService = {
   // Initialize database with default data if tables are empty
   async initialize(): Promise<void> {
     if (isSupabaseEnabled && supabase) {
-      const { data: settingsData } = await supabase.from('site_settings').select('id').eq('id', 'default').single();
-      if (!settingsData) {
-        await supabase.from('site_settings').insert(defaultSettings);
-      }
-
-      const { data: categoriesData } = await supabase.from('categories').select('id').limit(1);
-      if (!categoriesData || categoriesData.length === 0) {
-        await supabase.from('categories').insert(defaultCategories);
-      }
-
-      const { data: companiesData } = await supabase.from('companies').select('id').limit(1);
-      if (!companiesData || companiesData.length === 0) {
-        await supabase.from('companies').insert(defaultCompanies);
-      }
-
-      const { data: propertiesData } = await supabase.from('properties').select('id').limit(1);
-      if (!propertiesData || propertiesData.length === 0) {
-        await supabase.from('properties').insert(defaultProperties);
+      try {
+        const { data: settingsData, error } = await supabase.from('site_settings').select('id').eq('id', 'default').limit(1).maybeSingle();
+        if (!error && !settingsData) {
+          await dbService.initializeSettings();
+          await dbService.initializeCategories();
+          await dbService.initializeCompanies();
+          await dbService.initializeProperties();
+        }
+      } catch (err) {
+        console.warn('[dbService] Autoseed check bypassed:', err);
       }
     }
   }

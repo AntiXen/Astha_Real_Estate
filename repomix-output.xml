@@ -77,6 +77,20 @@ src/
   main.tsx
   types.ts
   vite-env.d.ts
+supabase/
+  .temp/
+    gotrue-version
+    linked-project.json
+    pooler-url
+    postgres-version
+    project-ref
+    rest-version
+    storage-version
+  functions/
+    create-admin/
+      index.ts
+    delete-admin/
+      index.ts
 .env.example
 .gitignore
 index.html
@@ -2287,6 +2301,280 @@ declare namespace App {
 }
 </file>
 
+<file path="supabase/.temp/gotrue-version">
+v2.192.0
+</file>
+
+<file path="supabase/.temp/linked-project.json">
+{"ref":"xhaonenygjvgrpbstmky","name":"AsthaRealEstate","organization_id":"feqwprtswmxsezohfgfw","organization_slug":"feqwprtswmxsezohfgfw"}
+</file>
+
+<file path="supabase/.temp/pooler-url">
+postgresql://postgres.xhaonenygjvgrpbstmky@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres
+</file>
+
+<file path="supabase/.temp/postgres-version">
+17.6.1.127
+</file>
+
+<file path="supabase/.temp/project-ref">
+xhaonenygjvgrpbstmky
+</file>
+
+<file path="supabase/.temp/rest-version">
+v14.5
+</file>
+
+<file path="supabase/.temp/storage-version">
+v1.61.7
+</file>
+
+<file path="supabase/functions/create-admin/index.ts">
+// supabase/functions/create-admin/index.ts
+//
+// Deploy with:
+//   supabase functions deploy create-admin
+//
+// Required secrets (set with `supabase secrets set`):
+//   SUPABASE_URL              (auto-provided by the platform)
+//   SUPABASE_SERVICE_ROLE_KEY (Project Settings -> API -> service_role)
+//
+// This function replaces the client-side `supabase.auth.signUp()` call
+// that AuthGate/SubAdminsView previously made directly. Doing it this
+// way means:
+//   1. Creating a new admin user never swaps out the calling admin's
+//      session (the old bug where adding a sub-admin logged the
+//      current admin out and logged them in as the new account).
+//   2. Only an existing super admin can create more admins, enforced
+//      server-side -- not just hidden by a UI toggle.
+//   3. The very first admin (bootstrap case, when admin_users is
+//      empty) can still self-register as the super admin.
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+  let body: { name?: string; email?: string; password?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const name = (body.name ?? "").trim();
+  const email = (body.email ?? "").trim().toLowerCase();
+  const password = body.password ?? "";
+
+  if (!name || !email || !password) {
+    return json({ error: "name, email and password are required" }, 400);
+  }
+  if (password.length < 8) {
+    return json({ error: "Password must be at least 8 characters" }, 400);
+  }
+
+  // service-role client: bypasses RLS, used only for trusted server-side checks
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // How many admins currently exist?
+  const { count, error: countError } = await admin
+    .from("admin_users")
+    .select("*", { count: "exact", head: true });
+
+  if (countError) {
+    return json({ error: `Could not check existing admins: ${countError.message}` }, 500);
+  }
+
+  const isBootstrap = (count ?? 0) === 0;
+
+  if (!isBootstrap) {
+    // Not the first admin -> caller MUST be an authenticated super admin.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!token) {
+      return json({ error: "Missing Authorization header" }, 401);
+    }
+
+    const { data: callerData, error: callerError } = await admin.auth.getUser(token);
+    if (callerError || !callerData?.user) {
+      return json({ error: "Invalid or expired session" }, 401);
+    }
+
+    const { data: callerProfile, error: callerProfileError } = await admin
+      .from("admin_users")
+      .select("is_super")
+      .eq("auth_user_id", callerData.user.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (callerProfileError || !callerProfile) {
+      return json({ error: "Caller is not a registered admin" }, 403);
+    }
+    if (!callerProfile.is_super) {
+      return json({ error: "Only the super admin can create new admins" }, 403);
+    }
+  }
+
+  // Create the auth user (does NOT touch the caller's session — this
+  // is the service-role admin API, separate from client auth.signUp)
+  const { data: createdUser, error: createUserError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+
+  if (createUserError || !createdUser?.user) {
+    return json({ error: createUserError?.message ?? "Failed to create user" }, 400);
+  }
+
+  const { error: insertError } = await admin.from("admin_users").insert({
+    auth_user_id: createdUser.user.id,
+    name,
+    email,
+    is_super: isBootstrap, // only the very first admin is super by default
+  });
+
+  if (insertError) {
+    // Roll back the auth user so we don't leave an orphaned account
+    await admin.auth.admin.deleteUser(createdUser.user.id);
+    return json({ error: `Failed to save admin profile: ${insertError.message}` }, 500);
+  }
+
+  return json({
+    user: {
+      userId: createdUser.user.id,
+      name,
+      email,
+      isSuper: isBootstrap,
+    },
+  });
+});
+</file>
+
+<file path="supabase/functions/delete-admin/index.ts">
+// supabase/functions/delete-admin/index.ts
+//
+// Deploy with:
+//   supabase functions deploy delete-admin
+//
+// Required secrets (same as create-admin):
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//
+// Removes an admin's auth.users record AND their admin_users row.
+// Only callable by an authenticated super admin. Prevents a super
+// admin from deleting their own only account.
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+  let body: { email?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const targetEmail = (body.email ?? "").trim().toLowerCase();
+  if (!targetEmail) return json({ error: "email is required" }, 400);
+
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  if (!token) return json({ error: "Missing Authorization header" }, 401);
+
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: callerData, error: callerError } = await admin.auth.getUser(token);
+  if (callerError || !callerData?.user) {
+    return json({ error: "Invalid or expired session" }, 401);
+  }
+
+  const { data: callerProfile, error: callerProfileError } = await admin
+    .from("admin_users")
+    .select("is_super, email")
+    .eq("auth_user_id", callerData.user.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (callerProfileError || !callerProfile) {
+    return json({ error: "Caller is not a registered admin" }, 403);
+  }
+  if (!callerProfile.is_super) {
+    return json({ error: "Only the super admin can delete admins" }, 403);
+  }
+  if (callerProfile.email.toLowerCase() === targetEmail) {
+    return json({ error: "You cannot delete your own account" }, 400);
+  }
+
+  const { data: target, error: targetError } = await admin
+    .from("admin_users")
+    .select("auth_user_id")
+    .eq("email", targetEmail)
+    .limit(1)
+    .maybeSingle();
+
+  if (targetError || !target) {
+    return json({ error: "Admin not found" }, 404);
+  }
+
+  const { error: deleteRowError } = await admin
+    .from("admin_users")
+    .delete()
+    .eq("email", targetEmail);
+
+  if (deleteRowError) {
+    return json({ error: `Failed to delete admin profile: ${deleteRowError.message}` }, 500);
+  }
+
+  if (target.auth_user_id) {
+    const { error: deleteAuthError } = await admin.auth.admin.deleteUser(target.auth_user_id);
+    if (deleteAuthError) {
+      // Profile row is already gone; surface this so it can be cleaned up manually if needed
+      return json({ error: `Admin profile removed, but failed to delete auth user: ${deleteAuthError.message}` }, 500);
+    }
+  }
+
+  return json({ success: true });
+});
+</file>
+
 <file path=".gitignore">
 node_modules/
 build/
@@ -2320,162 +2608,6 @@ coverage/
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
-</file>
-
-<file path="supabase-schema.sql">
--- Supabase schema for Astha Real Estate project
--- Run these statements in Supabase SQL editor or via CLI.
-
--- Site settings table for a single global configuration row.
-create table if not exists site_settings (
-  id text primary key,
-  logoText text not null,
-  bannerTitle text not null,
-  bannerSubtitle text not null,
-  bannerImage text not null,
-  contactPhone text not null,
-  contactWhatsapp text not null,
-  officeAddress text not null,
-  email text not null,
-  inserted_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Categories table for property types.
-create table if not exists categories (
-  id text primary key,
-  name text not null,
-  slug text not null unique,
-  inserted_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Companies table for developers/partners.
-create table if not exists companies (
-  id text primary key,
-  companyName text not null,
-  logoUrl text not null,
-  established text not null,
-  inserted_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Properties table with references to categories and companies.
-create table if not exists properties (
-  id text primary key,
-  title text not null,
-  description text not null,
-  price text not null,
-  location text not null,
-  categoryId text not null references categories(id) on delete set null,
-  companyId text not null references companies(id) on delete set null,
-  images jsonb not null,
-  isFeatured boolean not null default false,
-  status text not null,
-  bedrooms int,
-  bathrooms int,
-  size int,
-  facing text,
-  videoUrl text,
-  inserted_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Admin users table for secure admin authentication and roles.
-create table if not exists admin_users (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  email text not null unique,
-  -- Link to Supabase Auth user id when using Supabase Auth; keep password_hash nullable for local fallback
-  auth_user_id text unique,
-  password_hash text,
-  is_super boolean not null default false,
-  created_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Inquiries table for lead messages and callback requests.
-create table if not exists inquiries (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  category text not null,
-  location text not null,
-  budget text not null,
-  phone text not null,
-  message text,
-  status text not null default 'new',
-  created_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null
-);
-
--- Trigger functions for updated_at timestamps.
-create or replace function update_updated_at_column()
-returns trigger as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$ language plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_site_settings_updated_at') THEN
-    CREATE TRIGGER update_site_settings_updated_at
-    BEFORE UPDATE ON site_settings
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_categories_updated_at') THEN
-    CREATE TRIGGER update_categories_updated_at
-    BEFORE UPDATE ON categories
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_companies_updated_at') THEN
-    CREATE TRIGGER update_companies_updated_at
-    BEFORE UPDATE ON companies
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_properties_updated_at') THEN
-    CREATE TRIGGER update_properties_updated_at
-    BEFORE UPDATE ON properties
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_admin_users_updated_at') THEN
-    CREATE TRIGGER update_admin_users_updated_at
-    BEFORE UPDATE ON admin_users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_inquiries_updated_at') THEN
-    CREATE TRIGGER update_inquiries_updated_at
-    BEFORE UPDATE ON inquiries
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END
-$$ LANGUAGE plpgsql;
 </file>
 
 <file path="tsconfig.json">
@@ -2540,246 +2672,6 @@ $$ LANGUAGE plpgsql;
 /*
   Cache-Control: public, max-age=3600
   X-Content-Type-Options: nosniff
-</file>
-
-<file path="src/services/auth.ts">
-import { supabase, isSupabaseEnabled } from './supabaseClient';
-
-export interface AdminUser {
-  userId?: string;
-  name: string;
-  email: string;
-  isSuper: boolean;
-}
-
-export interface LocalAdminUser {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  isSuper?: boolean;
-}
-
-const ADMIN_USERS_KEY = 'astha_admins_registered';
-const SUPER_ADMIN_EMAIL_KEY = 'astha_super_admin_email';
-const SUPER_ADMIN_CREATED_KEY = 'astha_super_admin_created';
-const ACTIVE_ADMIN_EMAIL_KEY = 'astha_active_admin_email';
-const ACTIVE_ADMIN_NAME_KEY = 'astha_active_admin_name';
-
-const defaultAdmins: LocalAdminUser[] = [];
-
-function readLocalAdmins(includeDefaults = true): LocalAdminUser[] {
-  const raw = localStorage.getItem(ADMIN_USERS_KEY);
-  if (!raw) return includeDefaults ? [...defaultAdmins] : [];
-  try {
-    return JSON.parse(raw) as LocalAdminUser[];
-  } catch {
-    return includeDefaults ? [...defaultAdmins] : [];
-  }
-}
-
-function saveLocalAdmins(admins: LocalAdminUser[]) {
-  localStorage.setItem(ADMIN_USERS_KEY, JSON.stringify(admins));
-}
-
-function getLocalActiveAdmin() {
-  const email = localStorage.getItem(ACTIVE_ADMIN_EMAIL_KEY);
-  const name = localStorage.getItem(ACTIVE_ADMIN_NAME_KEY);
-  if (!email || !name) return null;
-  return { email, name };
-}
-
-function setLocalActiveAdmin(name: string, email: string) {
-  localStorage.setItem(ACTIVE_ADMIN_EMAIL_KEY, email);
-  localStorage.setItem(ACTIVE_ADMIN_NAME_KEY, name);
-}
-
-function clearLocalActiveAdmin() {
-  localStorage.removeItem(ACTIVE_ADMIN_EMAIL_KEY);
-  localStorage.removeItem(ACTIVE_ADMIN_NAME_KEY);
-}
-
-export async function getAdminUsers(): Promise<AdminUser[]> {
-  if (isSupabaseEnabled && supabase) {
-    const { data, error } = await supabase
-      .from('admin_users')
-      .select('auth_user_id, name, email, is_super')
-      .order('created_at', { ascending: true });
-    if (!error && data) {
-      return data.map((row: any) => ({
-        userId: row.auth_user_id || undefined,
-        name: row.name,
-        email: row.email,
-        isSuper: row.is_super
-      })) as AdminUser[];
-    }
-  }
-  return readLocalAdmins(false).map((admin) => ({
-    userId: admin.id,
-    name: admin.name,
-    email: admin.email,
-    isSuper: !!admin.isSuper
-  }));
-}
-
-export async function signInAdmin(email: string, password: string) {
-  if (isSupabaseEnabled && supabase) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error };
-    
-    if (data?.session?.user) {
-      // FIX: Use .limit(1) instead of .single() to prevent JSON coerce errors
-      const { data: profiles, error: profileError } = await supabase
-        .from('admin_users')
-        .select('name, email, is_super')
-        .eq('auth_user_id', data.session.user.id)
-        .limit(1);
-        
-      const profile = profiles?.[0];
-        
-      if (profileError || !profile) {
-        return { error: profileError || new Error('Admin profile not found in database') };
-      }
-      
-      setLocalActiveAdmin(profile.name, profile.email);
-      return {
-        user: {
-          userId: data.session.user.id,
-          name: profile.name,
-          email: profile.email,
-          isSuper: profile.is_super
-        }
-      };
-    }
-    return { error: new Error('Login failed') };
-  }
-
-  const admins = readLocalAdmins();
-  const found = admins.find((admin) => admin.email.toLowerCase() === email.toLowerCase() && admin.password === password);
-  if (!found) {
-    return { error: new Error('Invalid credentials') };
-  }
-  setLocalActiveAdmin(found.name, found.email);
-  return { user: { userId: found.id, name: found.name, email: found.email, isSuper: !!found.isSuper } };
-}
-
-export async function signUpAdmin(name: string, email: string, password: string) {
-  if (isSupabaseEnabled && supabase) {
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) return { error };
-    
-    const userId = data?.user?.id;
-    if (!userId) {
-      return { error: new Error('Unable to create user') };
-    }
-
-    let makeSuper = false;
-    try {
-      const { data: existing, error: countError } = await supabase.from('admin_users').select('*', { count: 'exact' }).limit(1);
-      if (!countError && (!existing || existing.length === 0)) {
-        makeSuper = true;
-      }
-    } catch (e) {}
-
-    const { error: profileError } = await supabase.from('admin_users').insert({
-      auth_user_id: userId,
-      name,
-      email,
-      is_super: makeSuper
-    });
-    
-    if (profileError) {
-      return { error: profileError };
-    }
-    
-    setLocalActiveAdmin(name, email.toLowerCase());
-    return { user: { userId, name, email: email.toLowerCase(), isSuper: makeSuper } };
-  }
-
-  const admins = readLocalAdmins(false);
-  const exists = admins.some((admin) => admin.email.toLowerCase() === email.toLowerCase());
-  if (exists) {
-    return { error: new Error('Email already registered') };
-  }
-  
-  const makeSuperLocal = admins.length === 0;
-  const newAdmin: LocalAdminUser = {
-    id: `admin-${Date.now()}`,
-    name,
-    email: email.toLowerCase(),
-    password,
-    isSuper: makeSuperLocal
-  };
-  
-  const updated = [...admins, newAdmin];
-  saveLocalAdmins(updated);
-  setLocalActiveAdmin(name, newAdmin.email);
-  return { user: { userId: newAdmin.id, name, email: newAdmin.email, isSuper: makeSuperLocal } };
-}
-
-export async function signOutAdmin() {
-  if (isSupabaseEnabled && supabase) {
-    await supabase.auth.signOut();
-  }
-  clearLocalActiveAdmin();
-}
-
-export async function getCurrentAdmin(): Promise<AdminUser | null> {
-  if (isSupabaseEnabled && supabase) {
-    const { data, error } = await supabase.auth.getSession();
-    if (error || !data?.session?.user) return null;
-    
-    const userId = data.session.user.id;
-    
-    // FIX: Use .limit(1) instead of .single() to prevent JSON coerce errors
-    const { data: profiles, error: profileError } = await supabase
-      .from('admin_users')
-      .select('name, email, is_super')
-      .eq('auth_user_id', userId)
-      .limit(1);
-      
-    const profile = profiles?.[0];
-      
-    if (profileError || !profile) return null;
-    
-    setLocalActiveAdmin(profile.name, profile.email);
-    return { userId, name: profile.name, email: profile.email, isSuper: profile.is_super };
-  }
-  
-  const active = getLocalActiveAdmin();
-  if (!active) return null;
-  
-  const admins = readLocalAdmins(true);
-  const found = admins.find((admin) => admin.email.toLowerCase() === active.email.toLowerCase());
-  if (!found) {
-    clearLocalActiveAdmin();
-    return null;
-  }
-  return { userId: found.id, name: found.name, email: found.email, isSuper: !!found.isSuper };
-}
-
-export async function createSubAdmin(name: string, email: string, password: string) {
-  return signUpAdmin(name, email, password);
-}
-
-export async function deleteAdminUser(email: string) {
-  if (isSupabaseEnabled && supabase) {
-    const { error } = await supabase.from('admin_users').delete().eq('email', email);
-    if (error) return { error };
-    const admins = await getAdminUsers();
-    return { admins };
-  }
-  const admins = readLocalAdmins(false);
-  const updated = admins.filter((admin) => admin.email.toLowerCase() !== email.toLowerCase());
-  saveLocalAdmins(updated);
-  return { admins };
-}
-
-export function initializeLocalAdmins() {
-  const raw = localStorage.getItem(ADMIN_USERS_KEY);
-  if (raw) return;
-  localStorage.setItem(SUPER_ADMIN_CREATED_KEY, 'false');
-}
 </file>
 
 <file path="src/types.ts">
@@ -2889,6 +2781,161 @@ View your app in AI Studio: https://ai.studio/apps/20c46f3f-8c0c-4892-b4f0-db501
    `npm run dev`
 </file>
 
+<file path="supabase-schema.sql">
+-- Supabase schema for Astha Real Estate project
+-- Run these statements in Supabase SQL editor or via CLI.
+
+-- Site settings table for a single global configuration row.
+create table if not exists site_settings (
+  id text primary key,
+  "logoText" text not null,
+  "bannerTitle" text not null,
+  "bannerSubtitle" text not null,
+  "bannerImage" text not null,
+  "contactPhone" text not null,
+  "contactWhatsapp" text not null,
+  "officeAddress" text not null,
+  email text not null,
+  inserted_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Categories table for property types.
+create table if not exists categories (
+  id text primary key,
+  name text not null,
+  slug text not null unique,
+  inserted_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Companies table for developers/partners.
+create table if not exists companies (
+  id text primary key,
+  "companyName" text not null,
+  "logoUrl" text not null,
+  established text not null,
+  inserted_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Properties table with references to categories and companies.
+create table if not exists properties (
+  id text primary key,
+  title text not null,
+  description text not null,
+  price text not null,
+  location text not null,
+  "categoryId" text not null references categories(id) on delete set null,
+  "companyId" text not null references companies(id) on delete set null,
+  images jsonb not null,
+  "isFeatured" boolean not null default false,
+  status text not null,
+  bedrooms int,
+  bathrooms int,
+  size int,
+  facing text,
+  "videoUrl" text,
+  inserted_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Admin users table for secure admin authentication and roles.
+create table if not exists admin_users (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  email text not null unique,
+  auth_user_id text unique,
+  password_hash text,
+  is_super boolean not null default false,
+  created_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Inquiries table for lead messages and callback requests.
+create table if not exists inquiries (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  category text not null,
+  location text not null,
+  budget text not null,
+  phone text not null,
+  message text,
+  status text not null default 'new',
+  created_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
+-- Trigger functions for updated_at timestamps.
+create or replace function update_updated_at_column()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_site_settings_updated_at') THEN
+    CREATE TRIGGER update_site_settings_updated_at
+    BEFORE UPDATE ON site_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_categories_updated_at') THEN
+    CREATE TRIGGER update_categories_updated_at
+    BEFORE UPDATE ON categories
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_companies_updated_at') THEN
+    CREATE TRIGGER update_companies_updated_at
+    BEFORE UPDATE ON companies
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_properties_updated_at') THEN
+    CREATE TRIGGER update_properties_updated_at
+    BEFORE UPDATE ON properties
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_admin_users_updated_at') THEN
+    CREATE TRIGGER update_admin_users_updated_at
+    BEFORE UPDATE ON admin_users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_inquiries_updated_at') THEN
+    CREATE TRIGGER update_inquiries_updated_at
+    BEFORE UPDATE ON inquiries
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END
+$$ LANGUAGE plpgsql;
+</file>
+
 <file path="vite.config.ts">
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
@@ -2911,6 +2958,280 @@ export default defineConfig(() => {
     },
   };
 });
+</file>
+
+<file path="src/services/auth.ts">
+import { supabase, isSupabaseEnabled } from './supabaseClient';
+
+export interface AdminUser {
+  userId?: string;
+  name: string;
+  email: string;
+  isSuper: boolean;
+}
+
+export interface LocalAdminUser {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  isSuper?: boolean;
+}
+
+const ADMIN_USERS_KEY = 'astha_admins_registered';
+const SUPER_ADMIN_CREATED_KEY = 'astha_super_admin_created';
+const ACTIVE_ADMIN_EMAIL_KEY = 'astha_active_admin_email';
+const ACTIVE_ADMIN_NAME_KEY = 'astha_active_admin_name';
+
+const defaultAdmins: LocalAdminUser[] = [];
+
+function readLocalAdmins(includeDefaults = true): LocalAdminUser[] {
+  const raw = localStorage.getItem(ADMIN_USERS_KEY);
+  if (!raw) return includeDefaults ? [...defaultAdmins] : [];
+  try {
+    return JSON.parse(raw) as LocalAdminUser[];
+  } catch {
+    return includeDefaults ? [...defaultAdmins] : [];
+  }
+}
+
+function saveLocalAdmins(admins: LocalAdminUser[]) {
+  localStorage.setItem(ADMIN_USERS_KEY, JSON.stringify(admins));
+}
+
+function getLocalActiveAdmin() {
+  const email = localStorage.getItem(ACTIVE_ADMIN_EMAIL_KEY);
+  const name = localStorage.getItem(ACTIVE_ADMIN_NAME_KEY);
+  if (!email || !name) return null;
+  return { email, name };
+}
+
+function setLocalActiveAdmin(name: string, email: string) {
+  localStorage.setItem(ACTIVE_ADMIN_EMAIL_KEY, email);
+  localStorage.setItem(ACTIVE_ADMIN_NAME_KEY, name);
+}
+
+function clearLocalActiveAdmin() {
+  localStorage.removeItem(ACTIVE_ADMIN_EMAIL_KEY);
+  localStorage.removeItem(ACTIVE_ADMIN_NAME_KEY);
+}
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  if (isSupabaseEnabled && supabase) {
+    // Relies on the admin_users RLS policies: a regular admin will only
+    // see their own row, a super admin sees everyone. Both are fine for
+    // the UI -- SubAdminsView is only rendered for super admins anyway.
+    const { data, error } = await supabase
+      .from('admin_users')
+      .select('auth_user_id, name, email, is_super')
+      .order('created_at', { ascending: true });
+    if (!error && data) {
+      return data.map((row: any) => ({
+        userId: row.auth_user_id || undefined,
+        name: row.name,
+        email: row.email,
+        isSuper: row.is_super
+      })) as AdminUser[];
+    }
+  }
+  return readLocalAdmins(false).map((admin) => ({
+    userId: admin.id,
+    name: admin.name,
+    email: admin.email,
+    isSuper: !!admin.isSuper
+  }));
+}
+
+export async function signInAdmin(email: string, password: string) {
+  if (isSupabaseEnabled && supabase) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error };
+
+    if (data?.session?.user) {
+      const { data: profiles, error: profileError } = await supabase
+        .from('admin_users')
+        .select('name, email, is_super')
+        .eq('auth_user_id', data.session.user.id)
+        .limit(1);
+
+      const profile = profiles?.[0];
+
+      if (profileError || !profile) {
+        return { error: profileError || new Error('Admin profile not found in database') };
+      }
+
+      setLocalActiveAdmin(profile.name, profile.email);
+      return {
+        user: {
+          userId: data.session.user.id,
+          name: profile.name,
+          email: profile.email,
+          isSuper: profile.is_super
+        }
+      };
+    }
+    return { error: new Error('Login failed') };
+  }
+
+  const admins = readLocalAdmins();
+  const found = admins.find((admin) => admin.email.toLowerCase() === email.toLowerCase() && admin.password === password);
+  if (!found) {
+    return { error: new Error('Invalid credentials') };
+  }
+  setLocalActiveAdmin(found.name, found.email);
+  return { user: { userId: found.id, name: found.name, email: found.email, isSuper: !!found.isSuper } };
+}
+
+/**
+ * Creates an admin account. Routed through the `create-admin` Edge
+ * Function instead of calling `supabase.auth.signUp()` directly.
+ *
+ * Why: `supabase.auth.signUp()` runs on the *client* SDK and automatically
+ * persists whatever session it returns. If a logged-in super admin used it
+ * to create a sub-admin, the browser would silently switch sessions to the
+ * brand-new sub-admin account instead of staying logged in. Calling the
+ * Edge Function (which uses the service-role key) creates the new user
+ * entirely server-side, so the caller's own session is never touched.
+ *
+ * The Edge Function also enforces, server-side, that:
+ *  - the very first admin ever created becomes the super admin (bootstrap), and
+ *  - every subsequent admin can only be created by an existing super admin.
+ * This replaces the old client-only "showSignupOption" UI gate, which was
+ * cosmetic and didn't actually stop anyone from calling the API directly.
+ */
+export async function signUpAdmin(name: string, email: string, password: string) {
+  if (isSupabaseEnabled && supabase) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+
+    const { data, error } = await supabase.functions.invoke('create-admin', {
+      body: { name, email, password },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+    });
+
+    if (error) return { error };
+    if (data?.error) return { error: new Error(data.error) };
+
+    const wasBootstrap = !accessToken; // no prior session => this was the first/super admin
+    if (wasBootstrap && data?.user) {
+      // Bootstrap case: nobody was logged in yet, so it's safe (and expected)
+      // to now sign the brand-new super admin in on this device.
+      const signInResult = await supabase.auth.signInWithPassword({ email, password });
+      if (signInResult.error) return { error: signInResult.error };
+      setLocalActiveAdmin(data.user.name, data.user.email);
+    }
+
+    return { user: data.user as AdminUser };
+  }
+
+  // Local-storage fallback (no Supabase configured)
+  const admins = readLocalAdmins(false);
+  const exists = admins.some((admin) => admin.email.toLowerCase() === email.toLowerCase());
+  if (exists) {
+    return { error: new Error('Email already registered') };
+  }
+
+  const makeSuperLocal = admins.length === 0;
+  const newAdmin: LocalAdminUser = {
+    id: `admin-${Date.now()}`,
+    name,
+    email: email.toLowerCase(),
+    password,
+    isSuper: makeSuperLocal
+  };
+
+  const updated = [...admins, newAdmin];
+  saveLocalAdmins(updated);
+
+  // Only auto-login for the bootstrap (first/super) admin, matching the
+  // Supabase-backed behavior above. A logged-in super admin creating a
+  // sub-admin should NOT have their own session swapped out.
+  if (makeSuperLocal) {
+    setLocalActiveAdmin(name, newAdmin.email);
+  }
+  return { user: { userId: newAdmin.id, name, email: newAdmin.email, isSuper: makeSuperLocal } };
+}
+
+export async function signOutAdmin() {
+  if (isSupabaseEnabled && supabase) {
+    await supabase.auth.signOut();
+  }
+  clearLocalActiveAdmin();
+}
+
+export async function getCurrentAdmin(): Promise<AdminUser | null> {
+  if (isSupabaseEnabled && supabase) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data?.session?.user) return null;
+
+    const userId = data.session.user.id;
+
+    const { data: profiles, error: profileError } = await supabase
+      .from('admin_users')
+      .select('name, email, is_super')
+      .eq('auth_user_id', userId)
+      .limit(1);
+
+    const profile = profiles?.[0];
+
+    if (profileError || !profile) return null;
+
+    setLocalActiveAdmin(profile.name, profile.email);
+    return { userId, name: profile.name, email: profile.email, isSuper: profile.is_super };
+  }
+
+  const active = getLocalActiveAdmin();
+  if (!active) return null;
+
+  const admins = readLocalAdmins(true);
+  const found = admins.find((admin) => admin.email.toLowerCase() === active.email.toLowerCase());
+  if (!found) {
+    clearLocalActiveAdmin();
+    return null;
+  }
+  return { userId: found.id, name: found.name, email: found.email, isSuper: !!found.isSuper };
+}
+
+export async function createSubAdmin(name: string, email: string, password: string) {
+  return signUpAdmin(name, email, password);
+}
+
+/**
+ * Deletes an admin. Routed through the `delete-admin` Edge Function so the
+ * removal is authorized server-side (caller must be the super admin) and
+ * cleans up both the `admin_users` row and the underlying auth.users
+ * record, which the client could never do directly (no DELETE policy and
+ * no access to auth.admin.* from the browser).
+ */
+export async function deleteAdminUser(email: string) {
+  if (isSupabaseEnabled && supabase) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (!accessToken) return { error: new Error('Not authenticated') };
+
+    const { data, error } = await supabase.functions.invoke('delete-admin', {
+      body: { email },
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (error) return { error };
+    if (data?.error) return { error: new Error(data.error) };
+
+    const admins = await getAdminUsers();
+    return { admins };
+  }
+
+  const admins = readLocalAdmins(false);
+  const updated = admins.filter((admin) => admin.email.toLowerCase() !== email.toLowerCase());
+  saveLocalAdmins(updated);
+  return { admins };
+}
+
+export function initializeLocalAdmins() {
+  const raw = localStorage.getItem(ADMIN_USERS_KEY);
+  if (raw) return;
+  localStorage.setItem(SUPER_ADMIN_CREATED_KEY, 'false');
+}
 </file>
 
 <file path="package.json">
@@ -3210,317 +3531,6 @@ export default function Navbar({
     </header>
   );
 }
-</file>
-
-<file path="src/services/db.ts">
-import { SiteSettings, Category, Company, Property, Inquiry } from '../types';
-import { defaultSettings, defaultCategories, defaultCompanies, defaultProperties } from '../data/seeding';
-import { supabase, isSupabaseEnabled } from './supabaseClient';
-
-// Storage Key Constants
-const SETTINGS_KEY = 'ast_settings';
-const CATEGORIES_KEY = 'ast_categories';
-const COMPANIES_KEY = 'ast_companies';
-const PROPERTIES_KEY = 'ast_properties';
-const INQUIRIES_KEY = 'ast_inquiries';
-const CACHE_TIMESTAMP_KEY = 'ast_cache_timestamp';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
-
-function logSupabaseError(operation: string, error: any) {
-  if (!error) return;
-  console.warn(`[dbService] Supabase error during ${operation}:`, error);
-}
-
-function readLocalItem<T>(key: string, fallback: T): T {
-  const raw = localStorage.getItem(key);
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeLocalItem<T>(key: string, value: T): void {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function updateCacheTimestamp() {
-  localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-}
-
-export const dbService = {
-  // --- Site Settings ---
-  async getSettings(): Promise<SiteSettings> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('site_settings').select('*').eq('id', 'default').single();
-      if (!error && data) {
-        updateCacheTimestamp();
-        writeLocalItem(SETTINGS_KEY, data);
-        return data as SiteSettings;
-      }
-      logSupabaseError('getSettings', error);
-      
-      if (error?.code === 'PGRST116') { // No rows found
-        await dbService.initializeSettings();
-        return defaultSettings;
-      }
-    }
-    return readLocalItem<SiteSettings>(SETTINGS_KEY, defaultSettings);
-  },
-
-  async initializeSettings(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error: insertError } = await supabase.from('site_settings').insert(defaultSettings).select().single();
-      if (insertError && insertError.code !== '23505') logSupabaseError('initializeSettings', insertError);
-    }
-  },
-
-  async saveSettings(settings: SiteSettings): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('site_settings').upsert(settings, { onConflict: 'id' }).select();
-      if (!error) return;
-      logSupabaseError('saveSettings', error);
-    }
-    writeLocalItem(SETTINGS_KEY, settings);
-  },
-
-  // --- Categories ---
-  async getCategories(): Promise<Category[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('categories').select('*');
-      if (!error && data) {
-        writeLocalItem(CATEGORIES_KEY, data);
-        return data as Category[];
-      }
-      logSupabaseError('getCategories', error);
-      if (data?.length === 0) await dbService.initializeCategories();
-    }
-    return readLocalItem<Category[]>(CATEGORIES_KEY, defaultCategories);
-  },
-
-  async initializeCategories(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').insert(defaultCategories).select();
-      if (error && error.code !== '23505') logSupabaseError('initializeCategories', error);
-    }
-  },
-
-  async saveCategories(categories: Category[]): Promise<Category[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id' }).select();
-      if (!error) return categories;
-      logSupabaseError('saveCategories', error);
-    }
-    writeLocalItem(CATEGORIES_KEY, categories);
-    return categories;
-  },
-
-  async deleteCategory(id: string): Promise<Category[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('categories').delete().eq('id', id);
-      if (!error) {
-        const categories = await this.getCategories();
-        return categories.filter((category) => category.id !== id);
-      }
-      logSupabaseError('deleteCategory', error);
-    }
-    const categories = await this.getCategories();
-    const filtered = categories.filter((c) => c.id !== id);
-    writeLocalItem(CATEGORIES_KEY, filtered);
-    return filtered;
-  },
-
-  // --- Companies (Developers) ---
-  async getCompanies(): Promise<Company[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('companies').select('*');
-      if (!error && data) {
-        writeLocalItem(COMPANIES_KEY, data);
-        return data as Company[];
-      }
-      logSupabaseError('getCompanies', error);
-      if (data?.length === 0) await dbService.initializeCompanies();
-    }
-    return readLocalItem<Company[]>(COMPANIES_KEY, defaultCompanies);
-  },
-
-  async initializeCompanies(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').insert(defaultCompanies).select();
-      if (error && error.code !== '23505') logSupabaseError('initializeCompanies', error);
-    }
-  },
-
-  async saveCompanies(companies: Company[]): Promise<Company[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').upsert(companies, { onConflict: 'id' }).select();
-      if (!error) return companies;
-      logSupabaseError('saveCompanies', error);
-    }
-    writeLocalItem(COMPANIES_KEY, companies);
-    return companies;
-  },
-
-  async deleteCompany(id: string): Promise<Company[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('companies').delete().eq('id', id);
-      if (!error) {
-        const companies = await this.getCompanies();
-        return companies.filter((company) => company.id !== id);
-      }
-      logSupabaseError('deleteCompany', error);
-    }
-    const companies = await this.getCompanies();
-    const filtered = companies.filter((c) => c.id !== id);
-    writeLocalItem(COMPANIES_KEY, filtered);
-    return filtered;
-  },
-
-  // --- Properties ---
-  async getProperties(): Promise<Property[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('properties').select('*');
-      if (!error && data) {
-        writeLocalItem(PROPERTIES_KEY, data);
-        return data as Property[];
-      }
-      logSupabaseError('getProperties', error);
-      if (data?.length === 0) await dbService.initializeProperties();
-    }
-    return readLocalItem<Property[]>(PROPERTIES_KEY, defaultProperties);
-  },
-
-  async initializeProperties(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').insert(defaultProperties).select();
-      if (error && error.code !== '23505') logSupabaseError('initializeProperties', error);
-    }
-  },
-
-  async getPropertyById(id: string): Promise<Property | undefined> {
-    const properties = await this.getProperties();
-    return properties.find((p) => p.id === id);
-  },
-
-  async saveProperties(properties: Property[]): Promise<Property[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').upsert(properties, { onConflict: 'id' }).select();
-      if (!error) return properties;
-      logSupabaseError('saveProperties', error);
-    }
-    writeLocalItem(PROPERTIES_KEY, properties);
-    return properties;
-  },
-
-  async deleteProperty(id: string): Promise<Property[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('properties').delete().eq('id', id);
-      if (!error) {
-        const properties = await this.getProperties();
-        return properties.filter((property) => property.id !== id);
-      }
-      logSupabaseError('deleteProperty', error);
-    }
-    const properties = await this.getProperties();
-    const filtered = properties.filter((p) => p.id !== id);
-    writeLocalItem(PROPERTIES_KEY, filtered);
-    return filtered;
-  },
-
-  // --- Inquiries (Leads) ---
-  async getInquiries(): Promise<Inquiry[]> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        writeLocalItem(INQUIRIES_KEY, data);
-        return data as Inquiry[];
-      }
-      logSupabaseError('getInquiries', error);
-    }
-    return readLocalItem<Inquiry[]>(INQUIRIES_KEY, []);
-  },
-
-  async saveInquiry(inquiryData: Omit<Inquiry, 'id' | 'created_at'>): Promise<Inquiry | null> {
-    if (isSupabaseEnabled && supabase) {
-      const { data, error } = await supabase.from('inquiries').insert([inquiryData]).select().single();
-      if (!error && data) return data as Inquiry;
-      logSupabaseError('saveInquiry', error);
-      return null;
-    }
-    
-    // Local storage fallback
-    const inquiries = await this.getInquiries();
-    const newInquiry: Inquiry = {
-      ...inquiryData,
-      id: `inq-${Date.now()}`,
-      created_at: new Date().toISOString()
-    };
-    const updated = [newInquiry, ...inquiries];
-    writeLocalItem(INQUIRIES_KEY, updated);
-    return newInquiry;
-  },
-
-  async updateInquiryStatus(id: string, status: 'new' | 'read'): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { error } = await supabase.from('inquiries').update({ status }).eq('id', id);
-      if (error) logSupabaseError('updateInquiryStatus', error);
-    }
-    
-    const inquiries = await this.getInquiries();
-    const updated = inquiries.map(inq => inq.id === id ? { ...inq, status } : inq);
-    writeLocalItem(INQUIRIES_KEY, updated);
-  },
-
-  // Reset helper to revert database back to original defaults
-  async resetToDefaults(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      await supabase.from('properties').delete().neq('id', '0');
-      await supabase.from('companies').delete().neq('id', '0');
-      await supabase.from('categories').delete().neq('id', '0');
-      await supabase.from('inquiries').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      
-      await supabase.from('site_settings').delete().neq('id', '0');
-      await supabase.from('site_settings').insert(defaultSettings);
-      
-      await supabase.from('categories').insert(defaultCategories);
-      await supabase.from('companies').insert(defaultCompanies);
-      await supabase.from('properties').insert(defaultProperties);
-      return;
-    }
-
-    writeLocalItem(SETTINGS_KEY, defaultSettings);
-    writeLocalItem(CATEGORIES_KEY, defaultCategories);
-    writeLocalItem(COMPANIES_KEY, defaultCompanies);
-    writeLocalItem(PROPERTIES_KEY, defaultProperties);
-    writeLocalItem(INQUIRIES_KEY, []);
-  },
-
-  // Initialize database with default data if tables are empty
-  async initialize(): Promise<void> {
-    if (isSupabaseEnabled && supabase) {
-      const { data: settingsData } = await supabase.from('site_settings').select('id').eq('id', 'default').single();
-      if (!settingsData) {
-        await supabase.from('site_settings').insert(defaultSettings);
-      }
-
-      const { data: categoriesData } = await supabase.from('categories').select('id').limit(1);
-      if (!categoriesData || categoriesData.length === 0) {
-        await supabase.from('categories').insert(defaultCategories);
-      }
-
-      const { data: companiesData } = await supabase.from('companies').select('id').limit(1);
-      if (!companiesData || companiesData.length === 0) {
-        await supabase.from('companies').insert(defaultCompanies);
-      }
-
-      const { data: propertiesData } = await supabase.from('properties').select('id').limit(1);
-      if (!propertiesData || propertiesData.length === 0) {
-        await supabase.from('properties').insert(defaultProperties);
-      }
-    }
-  }
-};
 </file>
 
 <file path="src/components/admin/AdminPanel.tsx">
@@ -4119,6 +4129,331 @@ export default function AdminPanel({
 }
 </file>
 
+<file path="src/services/db.ts">
+import { SiteSettings, Category, Company, Property, Inquiry } from '../types';
+import { defaultSettings, defaultCategories, defaultCompanies, defaultProperties } from '../data/seeding';
+import { supabase, isSupabaseEnabled } from './supabaseClient';
+
+// Storage Key Constants
+const SETTINGS_KEY = 'ast_settings';
+const CATEGORIES_KEY = 'ast_categories';
+const COMPANIES_KEY = 'ast_companies';
+const PROPERTIES_KEY = 'ast_properties';
+const INQUIRIES_KEY = 'ast_inquiries';
+const CACHE_TIMESTAMP_KEY = 'ast_cache_timestamp';
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
+
+function logSupabaseError(operation: string, error: any) {
+  if (!error) return;
+  console.warn(`[dbService] Supabase error during ${operation}:`, error);
+}
+
+function readLocalItem<T>(key: string, fallback: T): T {
+  const raw = localStorage.getItem(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalItem<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    // localStorage has a hard ~5-10MB per-origin quota. When Supabase is
+    // enabled, this cache is only a fallback for offline/error scenarios,
+    // never the source of truth -- so a failed write here must NOT block
+    // the rest of the app. (Previously this threw uncaught and the whole
+    // app hung on the loading screen.)
+    console.warn(`[dbService] Could not cache "${key}" to localStorage (likely quota exceeded):`, err);
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function updateCacheTimestamp() {
+  localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+}
+
+export const dbService = {
+  // --- Site Settings ---
+  async getSettings(): Promise<SiteSettings> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('site_settings').select('*').eq('id', 'default').single();
+      if (!error && data) {
+        updateCacheTimestamp();
+        writeLocalItem(SETTINGS_KEY, data);
+        return data as SiteSettings;
+      }
+      logSupabaseError('getSettings', error);
+      
+      if (error?.code === 'PGRST116') { // No rows found
+        await dbService.initializeSettings();
+        return defaultSettings;
+      }
+    }
+    return readLocalItem<SiteSettings>(SETTINGS_KEY, defaultSettings);
+  },
+
+  async initializeSettings(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error: insertError } = await supabase.from('site_settings').insert(defaultSettings).select().single();
+      if (insertError && insertError.code !== '23505') logSupabaseError('initializeSettings', insertError);
+    }
+  },
+
+  async saveSettings(settings: SiteSettings): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('site_settings').upsert(settings, { onConflict: 'id' }).select();
+      if (!error) return;
+      logSupabaseError('saveSettings', error);
+    }
+    writeLocalItem(SETTINGS_KEY, settings);
+  },
+
+  // --- Categories ---
+  async getCategories(): Promise<Category[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('categories').select('*');
+      if (!error && data) {
+        writeLocalItem(CATEGORIES_KEY, data);
+        return data as Category[];
+      }
+      logSupabaseError('getCategories', error);
+      if (data?.length === 0) await dbService.initializeCategories();
+    }
+    return readLocalItem<Category[]>(CATEGORIES_KEY, defaultCategories);
+  },
+
+  async initializeCategories(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('categories').insert(defaultCategories).select();
+      if (error && error.code !== '23505') logSupabaseError('initializeCategories', error);
+    }
+  },
+
+  async saveCategories(categories: Category[]): Promise<Category[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id' }).select();
+      if (!error) return categories;
+      logSupabaseError('saveCategories', error);
+    }
+    writeLocalItem(CATEGORIES_KEY, categories);
+    return categories;
+  },
+
+  async deleteCategory(id: string): Promise<Category[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('categories').delete().eq('id', id);
+      if (!error) {
+        const categories = await this.getCategories();
+        return categories.filter((category) => category.id !== id);
+      }
+      logSupabaseError('deleteCategory', error);
+    }
+    const categories = await this.getCategories();
+    const filtered = categories.filter((c) => c.id !== id);
+    writeLocalItem(CATEGORIES_KEY, filtered);
+    return filtered;
+  },
+
+  // --- Companies (Developers) ---
+  async getCompanies(): Promise<Company[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('companies').select('*');
+      if (!error && data) {
+        writeLocalItem(COMPANIES_KEY, data);
+        return data as Company[];
+      }
+      logSupabaseError('getCompanies', error);
+      if (data?.length === 0) await dbService.initializeCompanies();
+    }
+    return readLocalItem<Company[]>(COMPANIES_KEY, defaultCompanies);
+  },
+
+  async initializeCompanies(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('companies').insert(defaultCompanies).select();
+      if (error && error.code !== '23505') logSupabaseError('initializeCompanies', error);
+    }
+  },
+
+  async saveCompanies(companies: Company[]): Promise<Company[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('companies').upsert(companies, { onConflict: 'id' }).select();
+      if (!error) return companies;
+      logSupabaseError('saveCompanies', error);
+    }
+    writeLocalItem(COMPANIES_KEY, companies);
+    return companies;
+  },
+
+  async deleteCompany(id: string): Promise<Company[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('companies').delete().eq('id', id);
+      if (!error) {
+        const companies = await this.getCompanies();
+        return companies.filter((company) => company.id !== id);
+      }
+      logSupabaseError('deleteCompany', error);
+    }
+    const companies = await this.getCompanies();
+    const filtered = companies.filter((c) => c.id !== id);
+    writeLocalItem(COMPANIES_KEY, filtered);
+    return filtered;
+  },
+
+  // --- Properties ---
+  async getProperties(): Promise<Property[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('properties').select('*');
+      if (!error && data) {
+        writeLocalItem(PROPERTIES_KEY, data);
+        return data as Property[];
+      }
+      logSupabaseError('getProperties', error);
+      if (data?.length === 0) await dbService.initializeProperties();
+    }
+    return readLocalItem<Property[]>(PROPERTIES_KEY, defaultProperties);
+  },
+
+  async initializeProperties(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('properties').insert(defaultProperties).select();
+      if (error && error.code !== '23505') logSupabaseError('initializeProperties', error);
+    }
+  },
+
+  async getPropertyById(id: string): Promise<Property | undefined> {
+    const properties = await this.getProperties();
+    return properties.find((p) => p.id === id);
+  },
+
+  async saveProperties(properties: Property[]): Promise<Property[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('properties').upsert(properties, { onConflict: 'id' }).select();
+      if (!error) return properties;
+      logSupabaseError('saveProperties', error);
+    }
+    writeLocalItem(PROPERTIES_KEY, properties);
+    return properties;
+  },
+
+  async deleteProperty(id: string): Promise<Property[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('properties').delete().eq('id', id);
+      if (!error) {
+        const properties = await this.getProperties();
+        return properties.filter((property) => property.id !== id);
+      }
+      logSupabaseError('deleteProperty', error);
+    }
+    const properties = await this.getProperties();
+    const filtered = properties.filter((p) => p.id !== id);
+    writeLocalItem(PROPERTIES_KEY, filtered);
+    return filtered;
+  },
+
+  // --- Inquiries (Leads) ---
+  async getInquiries(): Promise<Inquiry[]> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
+      if (!error && data) {
+        writeLocalItem(INQUIRIES_KEY, data);
+        return data as Inquiry[];
+      }
+      logSupabaseError('getInquiries', error);
+    }
+    return readLocalItem<Inquiry[]>(INQUIRIES_KEY, []);
+  },
+
+  async saveInquiry(inquiryData: Omit<Inquiry, 'id' | 'created_at'>): Promise<Inquiry | null> {
+    if (isSupabaseEnabled && supabase) {
+      const { data, error } = await supabase.from('inquiries').insert([inquiryData]).select().single();
+      if (!error && data) return data as Inquiry;
+      logSupabaseError('saveInquiry', error);
+      return null;
+    }
+    
+    // Local storage fallback
+    const inquiries = await this.getInquiries();
+    const newInquiry: Inquiry = {
+      ...inquiryData,
+      id: `inq-${Date.now()}`,
+      created_at: new Date().toISOString()
+    };
+    const updated = [newInquiry, ...inquiries];
+    writeLocalItem(INQUIRIES_KEY, updated);
+    return newInquiry;
+  },
+
+  async updateInquiryStatus(id: string, status: 'new' | 'read'): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { error } = await supabase.from('inquiries').update({ status }).eq('id', id);
+      if (error) logSupabaseError('updateInquiryStatus', error);
+    }
+    
+    const inquiries = await this.getInquiries();
+    const updated = inquiries.map(inq => inq.id === id ? { ...inq, status } : inq);
+    writeLocalItem(INQUIRIES_KEY, updated);
+  },
+
+  // Reset helper to revert database back to original defaults
+  async resetToDefaults(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      await supabase.from('properties').delete().neq('id', '0');
+      await supabase.from('companies').delete().neq('id', '0');
+      await supabase.from('categories').delete().neq('id', '0');
+      await supabase.from('inquiries').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      await supabase.from('site_settings').delete().neq('id', '0');
+      await supabase.from('site_settings').insert(defaultSettings);
+      
+      await supabase.from('categories').insert(defaultCategories);
+      await supabase.from('companies').insert(defaultCompanies);
+      await supabase.from('properties').insert(defaultProperties);
+      return;
+    }
+
+    writeLocalItem(SETTINGS_KEY, defaultSettings);
+    writeLocalItem(CATEGORIES_KEY, defaultCategories);
+    writeLocalItem(COMPANIES_KEY, defaultCompanies);
+    writeLocalItem(PROPERTIES_KEY, defaultProperties);
+    writeLocalItem(INQUIRIES_KEY, []);
+  },
+
+  // Initialize database with default data if tables are empty
+  async initialize(): Promise<void> {
+    if (isSupabaseEnabled && supabase) {
+      const { data: settingsData } = await supabase.from('site_settings').select('id').eq('id', 'default').single();
+      if (!settingsData) {
+        await supabase.from('site_settings').insert(defaultSettings);
+      }
+
+      const { data: categoriesData } = await supabase.from('categories').select('id').limit(1);
+      if (!categoriesData || categoriesData.length === 0) {
+        await supabase.from('categories').insert(defaultCategories);
+      }
+
+      const { data: companiesData } = await supabase.from('companies').select('id').limit(1);
+      if (!companiesData || companiesData.length === 0) {
+        await supabase.from('companies').insert(defaultCompanies);
+      }
+
+      const { data: propertiesData } = await supabase.from('properties').select('id').limit(1);
+      if (!propertiesData || propertiesData.length === 0) {
+        await supabase.from('properties').insert(defaultProperties);
+      }
+    }
+  }
+};
+</file>
+
 <file path="src/App.tsx">
 import React, { useState, useEffect } from 'react';
 import { 
@@ -4191,6 +4526,7 @@ export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Navigation state
   const [viewState, setViewState] = useState<RouteState>({ page: 'home', propertyId: null });
@@ -4220,24 +4556,56 @@ export default function App() {
   const [testimonialUserHasLiked, setTestimonialUserHasLiked] = useState<{ [key: number]: boolean }>({});
   const [selectedTestimonial, setSelectedTestimonial] = useState<any | null>(null);
 
-  // Load database entities
+  // Load database entities.
+  //
+  // IMPORTANT: each fetch sets its own state immediately, instead of
+  // collecting all four results into local variables and calling every
+  // setState at the end. With the old "all-or-nothing" approach, a single
+  // failing fetch (e.g. getProperties() throwing) meant setSettings() was
+  // NEVER called -- and since the loading guard below is
+  // `if (loading || !settings)`, the app would stay on the spinner
+  // forever even after `loading` was set to false in `finally`, because
+  // `settings` stayed null. Setting state per-fetch means one failure
+  // can no longer take down the whole page.
   const loadDatabase = async () => {
+    setLoadError(null);
     try {
       await dbService.initialize();
-      const s = await dbService.getSettings();
-      const cat = await dbService.getCategories();
-      const comp = await dbService.getCompanies();
-      const prop = await dbService.getProperties();
+    } catch (err) {
+      console.error('Database init error:', err);
+    }
 
+    try {
+      const s = await dbService.getSettings();
       setSettings(s);
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+      setLoadError('সাইট সেটিংস লোড করা যায়নি। আবার চেষ্টা করুন।');
+    }
+
+    try {
+      const cat = await dbService.getCategories();
       setCategories(cat);
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+    }
+
+    try {
+      const comp = await dbService.getCompanies();
       setCompanies(comp);
+    } catch (err) {
+      console.error('Failed to load companies:', err);
+    }
+
+    try {
+      const prop = await dbService.getProperties();
       setProperties(prop);
     } catch (err) {
-      console.error("Database load error: ", err);
-    } finally {
-      setLoading(false);
+      console.error('Failed to load properties:', err);
+      setLoadError((prev) => prev ?? 'প্রপার্টি লোড করা যায়নি। আবার চেষ্টা করুন।');
     }
+
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -4358,12 +4726,30 @@ export default function App() {
     return matchesSearch && matchesCategory && matchesCompany;
   });
 
-  if (loading || !settings) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#05162E] font-bengali">
         <div className="text-center space-y-3">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#D4AF37] border-t-transparent mx-auto"></div>
           <p className="text-sm font-semibold text-[#D4AF37] gold-glow px-4 py-1.5 rounded-full bg-white/5 border border-white/10 uppercase tracking-wider">আস্থার ঠিকানা ডাটাবেজ লোড হচ্ছে...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#05162E] font-bengali">
+        <div className="text-center space-y-4 max-w-sm px-4">
+          <p className="text-sm font-semibold text-red-400 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
+            {loadError || 'সাইট লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।'}
+          </p>
+          <button
+            onClick={() => { setLoading(true); loadDatabase(); }}
+            className="px-5 py-2 rounded-full bg-[#D4AF37] text-[#05162E] font-semibold text-sm hover:opacity-90 transition"
+          >
+            আবার চেষ্টা করুন
+          </button>
         </div>
       </div>
     );
