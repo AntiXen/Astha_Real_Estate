@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
-import { X, Phone, MessageSquare, BedDouble, Bath, Maximize, MapPin, Building, Calendar, Compass, FileCheck2, ArrowLeft, Users, AlertTriangle } from 'lucide-react';
+import { 
+  X, Phone, MessageSquare, BedDouble, Bath, Maximize, MapPin, 
+  Building, Calendar, Compass, FileCheck2, ArrowLeft, Users, 
+  AlertTriangle, CheckCircle2 
+} from 'lucide-react';
 import { Property, Category, Company, SiteSettings } from '../../types';
+import { dbService } from '../../services/db';
 
 interface PropertyDetailsModalProps {
   propertyId: string;
@@ -22,6 +27,13 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
     return { type: 'image', url: property.images[0] || '' };
   });
 
+  // Lead capture states
+  const [showCallbackForm, setShowCallbackForm] = useState(false);
+  const [formName, setFormName] = useState('');
+  const [formPhone, setFormPhone] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+
   const categoryName = categories.find((c) => c.id === property.categoryId)?.name || 'প্রজেক্ট';
   const developer = companies.find((c) => c.id === property.companyId);
 
@@ -31,6 +43,31 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
 
   // Simulated live counter for FOMO triggers
   const viewCount = 5;
+
+  const handleSubmitCallback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim() || !formPhone.trim()) {
+      alert('অনুগ্রহ করে আপনার নাম ও মোবাইল নম্বর প্রদান করুন!');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await dbService.saveInquiry({
+        name: formName.trim(),
+        phone: formPhone.trim(),
+        location: property.location,
+        budget: property.price,
+        category: `${categoryName} (প্রজেক্ট: ${property.title})`,
+        status: 'new'
+      });
+      setIsSubmitted(true);
+    } catch (err) {
+      console.error('Error saving modal callback lead:', err);
+      alert('দুঃখিত, অনুরোধটি পাঠানো যায়নি। অনুগ্রহ করে সরাসরি কল করুন।');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-[#040e0c]/85 backdrop-blur-md font-bengali flex items-center justify-center p-0 sm:p-4" id="property-details-backdrop">
@@ -111,7 +148,7 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
               {/* Thumbnails list */}
               {(property.videoUrl || property.images.length > 0) && (
                 <div className="flex gap-2.5 overflow-x-auto pb-1" id="image-thumbnails-wrapper">
-                  {/* Video Thumbnail (Always displayed at the front) */}
+                  {/* Video Thumbnail */}
                   {property.videoUrl && (
                     <button
                       key="video-thumb"
@@ -207,7 +244,7 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
                   <p className="text-[10px] text-slate-450 leading-none">✓ কোনো অতিরিক্ত হিডেন দালাল ফি বা কমিশন চার্জ নেই</p>
                 </div>
 
-                {/* Grid spec metrics exactly as mockup layout */}
+                {/* Grid spec metrics */}
                 <div className="grid grid-cols-2 gap-y-4 gap-x-4 pb-5 border-b border-white/5 text-xs text-slate-300">
                   <div className="flex items-start space-x-2.5">
                     <Building className="h-4 w-4 text-[#C9A84C] mt-0.5 shrink-0" />
@@ -242,7 +279,7 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
                   </div>
                 </div>
 
-                {/* Description and procedure matching style */}
+                {/* Description and procedure */}
                 <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
                   <div className="space-y-2">
                     <h4 className="font-black text-white text-sm">প্রজেক্ট ওভারভিউ এবং বিবরণ:</h4>
@@ -258,27 +295,78 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
 
               </div>
 
-              {/* Conversion Buttons matches bottom right style split perfectly */}
-              <div className="pt-4 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-3" id="modal-ctas">
-                <a
-                  href={`tel:${settings.contactPhone}`}
-                  className="flex items-center justify-center space-x-2 rounded bg-[#C9A84C] text-[#02140e] hover:bg-[#b0923f] py-3.5 px-4 text-xs sm:text-sm font-black tracking-wide transition-all cursor-pointer text-center"
-                  id="modal-phone-btn"
-                >
-                  <Phone className="h-4 w-4 fill-[#02140e] text-[#02140e]" />
-                  <span>কল করুন (ফ্রি পরামর্শ)</span>
-                </a>
+              {/* Conversion and Lead Capture Form */}
+              <div className="pt-4 border-t border-white/5 space-y-3" id="modal-ctas">
+                {isSubmitted ? (
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 text-center text-xs text-emerald-400 space-y-1">
+                    <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
+                    <p className="font-bold text-sm">অনুরোধ সফলভাবে পাঠানো হয়েছে!</p>
+                    <p className="text-[11px] text-slate-300">আমাদের ড্রিম হোম অফিসার খুব শীঘ্রই আপনার সাথে যোগাযোগ করবেন।</p>
+                  </div>
+                ) : showCallbackForm ? (
+                  <form onSubmit={handleSubmitCallback} className="space-y-3 bg-white/5 p-4 rounded-xl border border-white/10 text-xs">
+                    <p className="font-bold text-white text-center mb-1 text-[13px]">কলব্যাক অনুরোধ করুন (ফ্রি কল)</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        required
+                        type="text"
+                        placeholder="আপনার নাম *"
+                        value={formName}
+                        onChange={(e) => setFormName(e.target.value)}
+                        disabled={isSubmitting}
+                        className="w-full bg-[#02140e] border border-white/15 rounded px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-[#C9A84C]"
+                      />
+                      <input
+                        required
+                        type="tel"
+                        placeholder="মোবাইল নম্বর *"
+                        value={formPhone}
+                        onChange={(e) => setFormPhone(e.target.value)}
+                        disabled={isSubmitting}
+                        className="w-full bg-[#02140e] border border-white/15 rounded px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-[#C9A84C]"
+                      />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowCallbackForm(false)}
+                        disabled={isSubmitting}
+                        className="flex-1 rounded border border-white/15 text-slate-300 py-2 hover:bg-white/5 transition-all cursor-pointer font-bold"
+                      >
+                        বাতিল
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="flex-1 rounded bg-[#C9A84C] text-[#02140e] py-2 hover:bg-[#b0923f] transition-all cursor-pointer font-extrabold"
+                      >
+                        {isSubmitting ? 'অনুরোধ পাঠানো হচ্ছে...' : 'অনুরোধ নিশ্চিত করুন'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setShowCallbackForm(true)}
+                      className="flex items-center justify-center space-x-2 rounded bg-[#C9A84C] text-[#02140e] hover:bg-[#b0923f] py-3.5 px-4 text-xs sm:text-sm font-black tracking-wide transition-all cursor-pointer text-center outline-none"
+                      id="modal-phone-btn"
+                    >
+                      <Phone className="h-4 w-4 fill-[#02140e] text-[#02140e]" />
+                      <span>কলব্যাক অনুরোধ করুন (ফ্রি কল)</span>
+                    </button>
 
-                <a
-                  href={whatsappUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center space-x-2 rounded bg-[#12B76A] text-white hover:bg-[#0fa15c] py-3.5 px-4 text-xs sm:text-sm font-black tracking-wide transition-all cursor-pointer text-center"
-                  id="modal-whatsapp-btn"
-                >
-                  <MessageSquare className="h-4 w-4 fill-white text-[#12B76A]" />
-                  <span>হোয়াটসঅ্যাপ করুন</span>
-                </a>
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-center space-x-2 rounded bg-[#12B76A] text-white hover:bg-[#0fa15c] py-3.5 px-4 text-xs sm:text-sm font-black tracking-wide transition-all cursor-pointer text-center"
+                      id="modal-whatsapp-btn"
+                    >
+                      <MessageSquare className="h-4 w-4 fill-white text-[#12B76A]" />
+                      <span>হোয়াটসঅ্যাপ করুন</span>
+                    </a>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -291,4 +379,3 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
     </div>
   );
 }
-

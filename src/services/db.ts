@@ -309,12 +309,23 @@ export const dbService = {
   async saveInquiry(inquiryData: Omit<Inquiry, 'id' | 'created_at'>): Promise<Inquiry | null> {
     if (isSupabaseEnabled && supabase) {
       const payload = sanitizePayload(inquiryData);
-      const { data, error } = await supabase.from('inquiries').insert([payload]).select().single();
+      
+      // 🛡️ SECURITY FIX: Do not chain .select() or .single() here!
+      // Since anonymous users do not have SELECT permissions, chaining select()
+      // triggers an RLS violation. Executing a clean insert() succeeds perfectly
+      // while preserving total database privacy.
+      const { error } = await supabase.from('inquiries').insert([payload]);
       if (error) {
         logSupabaseError('saveInquiry', error);
         throw new Error(`Inquiry submission failed: ${error?.message || 'Unknown error'}`);
       }
-      return data as Inquiry;
+      
+      // Return a simulated object since the write succeeded
+      return {
+        ...inquiryData,
+        id: 'temp-inq-id',
+        created_at: new Date().toISOString()
+      } as Inquiry;
     }
     
     // Local storage fallback
