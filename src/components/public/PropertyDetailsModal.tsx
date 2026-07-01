@@ -7,6 +7,9 @@ import {
 import { Property, Category, Company, SiteSettings } from '../../types';
 import { dbService } from '../../services/db';
 
+// Import our validation helpers
+import { isValidBDPhoneNumber, normalizeBDPhoneNumber, sanitizeInput } from '../../utils/validation';
+
 interface PropertyDetailsModalProps {
   propertyId: string;
   properties: Property[];
@@ -46,15 +49,28 @@ export default function PropertyDetailsModal({ propertyId, properties, categorie
 
   const handleSubmitCallback = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !formPhone.trim()) {
-      alert('অনুগ্রহ করে আপনার নাম ও মোবাইল নম্বর প্রদান করুন!');
+
+    // 1. Sanitize name input
+    const sanitizedName = sanitizeInput(formName);
+    if (!sanitizedName) {
+      alert('অনুগ্রহ করে আপনার নাম সঠিকভাবে লিখুন।');
       return;
     }
+
+    // 2. Validate Bangladeshi Phone format
+    if (!isValidBDPhoneNumber(formPhone)) {
+      alert('অনুগ্রহ করে একটি সঠিক বাংলাদেশী মোবাইল নম্বর প্রদান করুন!');
+      return;
+    }
+
+    // 3. Normalize phone format
+    const normalizedPhone = normalizeBDPhoneNumber(formPhone);
+
     setIsSubmitting(true);
     try {
       await dbService.saveInquiry({
-        name: formName.trim(),
-        phone: formPhone.trim(),
+        name: sanitizedName,
+        phone: normalizedPhone,
         location: property.location,
         budget: property.price,
         category: `${categoryName} (প্রজেক্ট: ${property.title})`,

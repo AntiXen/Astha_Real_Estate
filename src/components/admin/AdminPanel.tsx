@@ -5,6 +5,9 @@ import { getCurrentAdmin, initializeLocalAdmins, getAdminUsers, createSubAdmin, 
 import { dbService } from '../../services/db';
 import { uploadPropertyImage, uploadPropertyVideo, deleteStorageFileByUrl } from '../../services/storage';
 
+// Import our validation helpers
+import { isValidEmail, isValidSlug, isValidEstablishedYear, sanitizeInput } from '../../utils/validation';
+
 // Import our modular views
 import AuthGate from './AuthGate';
 import AdminSidebar from './AdminSidebar';
@@ -150,21 +153,39 @@ export default function AdminPanel({
   };
 
   const handleSaveSettings = () => {
-    onUpdateSettings(localSettings);
+    // Sanitize site settings values
+    const sanitizedSettings = {
+      ...localSettings,
+      logoText: sanitizeInput(localSettings.logoText),
+      bannerTitle: sanitizeInput(localSettings.bannerTitle),
+      bannerSubtitle: sanitizeInput(localSettings.bannerSubtitle),
+      officeAddress: sanitizeInput(localSettings.officeAddress)
+    };
+
+    onUpdateSettings(sanitizedSettings);
     setSettingsSuccess(true);
     setTimeout(() => setSettingsSuccess(false), 3000);
   };
 
   const handleAddCategory = () => {
     setCatError(''); setCatSuccess('');
-    if (!newCatName.trim() || !newCatSlug.trim()) return setCatError('নাম এবং ইউনিক কোড পূরণ করুন!');
     
-    const normalizedSlug = newCatSlug.trim().toLowerCase().replace(/\s+/g, '-');
-    if (categories.some(c => c.slug === normalizedSlug && c.id !== editingCatId)) {
+    const sanitizedName = sanitizeInput(newCatName);
+    const sanitizedSlug = sanitizeInput(newCatSlug).toLowerCase().replace(/\s+/g, '-');
+
+    if (!sanitizedName || !sanitizedSlug) {
+      return setCatError('নাম এবং ইউনিক কোড পূরণ করুন!');
+    }
+
+    if (!isValidSlug(sanitizedSlug)) {
+      return setCatError('স্ল্যাগ শুধুমাত্র ছোট হাতের ইংরেজি অক্ষর, সংখ্যা এবং হাইফেন (-) হতে পারে!');
+    }
+
+    if (categories.some(c => c.slug === sanitizedSlug && c.id !== editingCatId)) {
       return setCatError('এই ইউনিক কোডটি ব্যবহৃত হয়েছে!');
     }
 
-    const targetCat: Category = { id: editingCatId || `cat-${Date.now()}`, name: newCatName.trim(), slug: normalizedSlug };
+    const targetCat: Category = { id: editingCatId || `cat-${Date.now()}`, name: sanitizedName, slug: sanitizedSlug };
     onUpdateCategories(editingCatId ? categories.map(c => c.id === editingCatId ? targetCat : c) : [...categories, targetCat]);
     
     setCatSuccess(editingCatId ? 'আপডেট হয়েছে!' : 'যোগ করা হয়েছে!');
@@ -189,11 +210,21 @@ export default function AdminPanel({
 
   const handleAddCompany = () => {
     setCompError(''); setCompSuccess('');
-    if (!newCompanyName.trim()) return setCompError('কোম্পানির নাম পূরণ করুন!');
+    
+    const sanitizedName = sanitizeInput(newCompanyName);
+    const sanitizedEstablished = sanitizeInput(newCompanyEstablished);
+
+    if (!sanitizedName) return setCompError('কোম্পানির নাম পূরণ করুন!');
+
+    if (sanitizedEstablished && !isValidEstablishedYear(sanitizedEstablished)) {
+      return setCompError('প্রতিষ্ঠার সাল অবশ্যই একটি সঠিক ৪-ডিজিটের বছর হতে হবে (যেমন: ২০০৫)!');
+    }
 
     const newComp: Company = {
-      id: `comp-${Date.now()}`, companyName: newCompanyName.trim(),
-      logoUrl: newCompanyLogo || '🏢', established: newCompanyEstablished.trim() || '২০১৫'
+      id: `comp-${Date.now()}`, 
+      companyName: sanitizedName,
+      logoUrl: newCompanyLogo || '🏢', 
+      established: sanitizedEstablished || '২০১৫'
     };
 
     onUpdateCompanies([...companies, newComp]);
@@ -218,7 +249,6 @@ export default function AdminPanel({
     setPropImages([]); setPropVideoUrl(''); setPropStatus('সক্রিয়');
     setPropSize(1800); setPropBedrooms(3); setPropBathrooms(3);
     setPropFacing('দক্ষিণমুখী'); setPropFeatured(false);
-    setMediaError('');
     setIsPropertyFormOpen(true);
   };
 
@@ -229,24 +259,40 @@ export default function AdminPanel({
     setPropImages(p.images || []); setPropVideoUrl(p.videoUrl || ''); setPropStatus(p.status);
     setPropSize(p.size || 2000); setPropBedrooms(p.bedrooms || 3); setPropBathrooms(p.bathrooms || 3);
     setPropFacing(p.facing || 'দক্ষিণমুখী'); setPropFeatured(p.isFeatured);
-    setMediaError('');
     setIsPropertyFormOpen(true);
   };
 
   const handleSaveProperty = () => {
-    if (!propTitle || !propPrice || !propLocation) return alert('শিরোনাম, মূল্য এবং লোকেশন প্রদান করুন!');
+    const sanitizedTitle = sanitizeInput(propTitle);
+    const sanitizedPrice = sanitizeInput(propPrice);
+    const sanitizedLocation = sanitizeInput(propLocation);
+    const sanitizedDesc = sanitizeInput(propDesc);
+
+    if (!sanitizedTitle || !sanitizedPrice || !sanitizedLocation) {
+      return alert('শিরোনাম, মূল্য এবং লোকেশন সঠিকভাবে প্রদান করুন!');
+    }
+
+    if (propSize <= 0) {
+      return alert('প্রপার্টি পরিমাপ বা সাইজ অবশ্যই ০ থেকে বড় হতে হবে!');
+    }
     
     const defaultImg = 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&q=80&w=800';
     const finalImages = propImages.length > 0 ? propImages : [defaultImg];
 
     const savedProp: Property = {
       id: editingProperty?.id || `prop-${Date.now()}`,
-      title: propTitle.trim(), description: propDesc.trim() || 'যাচাইকৃত একটি প্রিমিয়াম প্রজেক্ট।',
-      price: propPrice.trim(), location: propLocation.trim(),
-      categoryId: propCategory, companyId: propCompany,
+      title: sanitizedTitle, 
+      description: sanitizedDesc || 'যাচাইকৃত একটি প্রিমিয়াম প্রজেক্ট।',
+      price: sanitizedPrice, 
+      location: sanitizedLocation,
+      categoryId: propCategory, 
+      companyId: propCompany,
       images: finalImages,
-      videoUrl: propVideoUrl.trim() || undefined, isFeatured: propFeatured, status: propStatus,
-      size: propSize, facing: propFacing,
+      videoUrl: propVideoUrl.trim() || undefined, 
+      isFeatured: propFeatured, 
+      status: propStatus,
+      size: propSize, 
+      facing: propFacing,
       bedrooms: propCategory === 'cat-2' ? undefined : propBedrooms,
       bathrooms: propCategory === 'cat-2' ? undefined : propBathrooms,
     };
@@ -265,8 +311,21 @@ export default function AdminPanel({
     setSubAdminError(''); setSubAdminSuccess('');
     if (isSubAdmin) return setSubAdminError('শুধুমাত্র সুপার-অ্যাডমিন যুক্ত করতে পারেন!');
     
-    const res = await createSubAdmin(subAdminName.trim(), subAdminEmail.trim().toLowerCase(), subAdminPassword.trim());
-    if (res?.error) return setSubAdminError('সাব-অ্যাডমিন তৈরি করতে সমস্যা হয়েছে।');
+    const sanitizedName = sanitizeInput(subAdminName);
+    const sanitizedEmail = subAdminEmail.trim().toLowerCase();
+
+    if (!sanitizedName) return setSubAdminError('নাম সঠিকভাবে লিখুন।');
+
+    if (!isValidEmail(sanitizedEmail)) {
+      return setSubAdminError('দয়া করে একটি সঠিক ইমেইল ঠিকানা প্রদান করুন!');
+    }
+
+    if (subAdminPassword.length < 8) {
+      return setSubAdminError('নিরাপত্তার স্বার্থে পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে!');
+    }
+    
+    const res = await createSubAdmin(sanitizedName, sanitizedEmail, subAdminPassword.trim());
+    if (res?.error) return setSubAdminError(`সাব-অ্যাডমিন তৈরি করতে সমস্যা হয়েছে: ${res.error.message || 'Unknown error'}`);
 
     setRegisteredAdmins((await getAdminUsers()).map(a => ({ name: a.name, email: a.email, isSuper: a.isSuper })));
     setSubAdminSuccess(`নতুন সাব-অ্যাডমিন যুক্ত হয়েছে!`);
@@ -291,6 +350,7 @@ export default function AdminPanel({
     await dbService.updateInquiryStatus(inq.id, newStatus);
   };
 
+  // --- Auth Gate check ---
   if (!isAuthenticated) {
     return (
       <AuthGate 

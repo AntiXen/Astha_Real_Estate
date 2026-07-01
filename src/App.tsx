@@ -13,6 +13,9 @@ import { SiteSettings, Category, Company, Property, RouteState } from './types';
 // Services
 import { dbService } from './services/db';
 
+// Validation Utilities
+import { isValidBDPhoneNumber, normalizeBDPhoneNumber, sanitizeInput } from './utils/validation';
+
 // Components
 import Navbar from './components/public/Navbar';
 import Footer from './components/public/Footer';
@@ -99,17 +102,7 @@ export default function App() {
   const [testimonialUserHasLiked, setTestimonialUserHasLiked] = useState<{ [key: number]: boolean }>({});
   const [selectedTestimonial, setSelectedTestimonial] = useState<any | null>(null);
 
-  // Load database entities.
-  //
-  // IMPORTANT: each fetch sets its own state immediately, instead of
-  // collecting all four results into local variables and calling every
-  // setState at the end. With the old "all-or-nothing" approach, a single
-  // failing fetch (e.g. getProperties() throwing) meant setSettings() was
-  // NEVER called -- and since the loading guard below is
-  // `if (loading || !settings)`, the app would stay on the spinner
-  // forever even after `loading` was set to false in `finally`, because
-  // `settings` stayed null. Setting state per-fetch means one failure
-  // can no longer take down the whole page.
+  // Load database entities
   const loadDatabase = async () => {
     setLoadError(null);
     try {
@@ -222,10 +215,21 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Secure Lead Submission Flow
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leadName || !leadPhone) {
-      alert('অনুগ্রহ করে আপনার নাম ও মোবাইল নম্বর লিখুন।');
+    
+    const sanitizedName = sanitizeInput(leadName);
+    const sanitizedLocation = sanitizeInput(leadLocation) || 'অনির্দিষ্ট';
+    const sanitizedBudget = sanitizeInput(leadBudget) || 'অনির্দিষ্ট';
+
+    if (!sanitizedName) {
+      alert('অনুগ্রহ করে আপনার নাম সঠিকভাবে লিখুন।');
+      return;
+    }
+
+    if (!isValidBDPhoneNumber(leadPhone)) {
+      alert('অনুগ্রহ করে একটি সঠিক বাংলাদেশী মোবাইল নম্বর প্রদান করুন!');
       return;
     }
 
@@ -236,11 +240,13 @@ export default function App() {
         ? categories.find(c => c.id === selectedCategoryId)?.name || 'যেকোনো'
         : 'যেকোনো';
 
+      const normalizedPhone = normalizeBDPhoneNumber(leadPhone);
+
       await dbService.saveInquiry({
-        name: leadName.trim(),
-        phone: leadPhone.trim(),
-        location: leadLocation.trim() || 'অনির্দিষ্ট',
-        budget: leadBudget.trim() || 'অনির্দিষ্ট',
+        name: sanitizedName,
+        phone: normalizedPhone,
+        location: sanitizedLocation,
+        budget: sanitizedBudget,
         category: categoryName,
         status: 'new'
       });
@@ -433,7 +439,7 @@ export default function App() {
 
             <section className="py-12 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-6" id="category-quickboard">
               <div className="text-center sm:text-left">
-                <h3 className="text-md sm:text-lg font-bold text-[#C9A84C] font-bengali">প্রপার্টির ধরন অনুযায়ী খুঁজুন</h3>
+                <h3 className="text-md sm:text-lg font-bold text-[#C9A84C] font-bengali">প্রপার্টি ধরন অনুযায়ী খুঁজুন</h3>
                 <p className="text-[11px] text-slate-300 mt-0.5">আপনার প্রোফাইল অনুযায়ী সেরা অপশন বেছে নিন</p>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -514,7 +520,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 {[
                   { id: 0, quote: "দলিলপত্র নিয়ে আমার মনে যে দুশ্চিন্তা ছিল তা আস্থার ঠিকানার লিগ্যাল টিম এসে দূর করে দিয়েছে। ইস্টার্ন হাউজিং এর প্রজেক্টটিতে সরাসরি মালিকানার ধারাবাহিক দলিল মিলিয়ে নির্ভয়ে বুকিং দিতে পেরেছি।", name: "মোস্তাফা জামান রাজু", role: "আবাসিক ক্রেতা, মিরপুর", initial: "এম", rating: 5, story: "মোস্তাফা জামান রাজু মিরপুর ১২-তে একটি লাক্সারি অ্যাপার্টমেন্ট কিনতে গিয়ে দলিলের ধারাবাহিকতা ও মিউটেশন নিয়ে বেশ চিন্তিত ছিলেন। আস্থার ঠিকানার এক্সপার্ট লিগ্যাল টিম সমস্ত ভায়া দলিল, জোত খতিয়ান এবং নামজারি পুঙ্খানুপুঙ্খভাবে যাচাই করে সঠিক রিপোর্ট প্রদান করেন। এরপরই তিনি শতভাগ নিশ্চিন্তে বুকিং সম্পন্ন করে নিজের স্থায়ী ফ্ল্যাটের আইনি নিরাপত্তা নিশ্চিত করেন।", verifiedFeatures: ["ভায়া দলিল চেইন চেক সফল", "নামজারি খতিয়ান ভেরিফিকেশন", "রাজউক লে-আউট প্ল্যান অনুমোদন"] },
-                  { id: 1, quote: "একজন প্রবাসী হিসেবে বাংলাদেশ প্রপার্টি কেনা আমার কাছে সবসময় ঝুঁকিপূর্ণ মনে হতো। কিন্তু আস্থা রীয়াল এস্টেট আমার সাব-রেজিস্ট্রি এবং নামজারি কাজ সম্পূর্ণ স্বচ্ছতার সাথে সম্পন্ন করে দিয়েছে।", name: "কামরুল আহসান চৌধুরী", role: "লন্ডন প্রবাসী, সিলেট প্রবাসী জোন", initial: "ক", rating: 5, story: "লন্ডন প্রবাসী কামরুল আহসান চৌধুরী দূর প্রবাসে থাকায় বাংলাদেশে রিয়েল এস্টেট বিনিয়োগ নিয়ে আস্থাহীনতায় ভুগছিলেন। আমাদের মাধ্যমে তিনি প্রপার্টির ভিডিও বুকিং থেকে শুরু করে আমমোক্তারনামা এবং সর্বশেষ সাব-রেজিস্ট্রির পুরো প্রক্রিয়া ডিজিটাল ট্র্যাকিং ও আইনি সহায়তার মাধ্যমে সম্পন্ন করেছেন, যাতে তার ১ টাকাও ক্ষতি হয়নি।", verifiedFeatures: ["অনলাইন জুম লাইভ সাইট ভিজিট", "পাওয়ার অব অ্যাটর্নি আইনি স্ক্রুটিনি", "ঝুঁকিমুক্ত রেজিস্ট্রি দলিল সম্পাদন"] },
+                  { id: 1, quote: "একজন প্রবাসী হিসেবে বাংলাদেশ প্রপার্টি কেনা আমার কাছে সবসময় ঝুঁকিপূর্ণ মনে হতো। কিন্তু আস্থা রীয়াল এস্টেট আমার সাব-রেজিস্ট্রি এবং নামজারি কাজ সম্পূর্ণ স্বচ্ছতার সাথে সম্পন্ন করে দিয়েছে।", name: "কামরুল আহসান চৌধুরী", role: "লন্ডন প্রবাসী, সিলেট প্রবাসী জোন", initial: "ক", rating: 5, story: "লন্ডন প্রবাসী কামরুল আহসান চৌধুরী দূর প্রবাসে থাকায় বাংলাদেশে রিয়েল এস্টেট বিনিয়োগ নিয়ে আস্থাহীনতায় ভুগছিলেন। আমাদের মাধ্যমে তিনি প্রপার্টির ভিডিও বুকিং থেকে শুরু করে আমমোক্তারনামা এবং সর্বশেষ সাব-রেজিস্ট্রির পুরো প্রক্রিয়া ডিজিটাল ট্র্যাকিং ও আইনি সহায়তার মাধ্যমে সম্পন্ন করেছেন, যাতে তার ১ টাকাও ক্ষতি হয়নি।", verifiedFeatures: ["অনলাইন জুম লাইভ সাইট ভিজিট", "পাওয়ার অব অ্যাটর্নি আইনি স্ক্রুটিনি", "ঝুঁকিমুক্ত রেজিস্ট্রি দলিল সম্পাদন"] },
                   { id: 2, quote: "কোন প্রকার হিডেন চার্জ ছাড়াই সরাসরি এজেন্সির মূল্যে গ্রিন ভ্যালি কমার্শিয়ালের ৩টি অফিস ফ্লোর কিনে আমাদের কর্পোরেট ব্যবসা সম্প্রসারণ সহজে করতে পেরেছি।", name: "ড. জেেস্মন আক্তার", role: "ম্যানেজিং ডিরেক্টর, বায়োফাইন বাংলাদেশ", initial: "জে", rating: 5, story: "বায়োফাইন বাংলাদেশের ব্যবসা সম্প্রসারণের জন্য গুলশানে কমার্শিয়াল স্পেসের খোঁজ করছিলেন ড. জেসমিন আক্তার। আস্থার ঠিকানা কোনো অতিরিক্ত ফিজিক্যাল ব্রোকারেজ ফি বা মধ্যস্থতাকারী চার্জ ছাড়াই সরাসরি ডেভেলপার কোম্পানির অফিশিয়াল কর্পোরেট ডিসকাউন্টে ৩টি ফ্লোরের ডিলটি স্বচ্ছ আইনি প্রক্রিয়ায় করিয়ে দেয়।", verifiedFeatures: ["০% গোপন ব্রোকারেজ ফি গ্যারান্টি", "কমার্শিয়াল ইউটিলিটি নকশা যাচাই", "সরাসরি ডেভলপার কর্পোরেট এগ্রিমেন্ট"] }
                 ].map((item) => {
                   const hasLiked = !!testimonialUserHasLiked[item.id];
@@ -650,7 +656,7 @@ export default function App() {
                   {[
                     { q: "আমাদের মাধ্যমে প্রপার্টি কেনার সুবিধা কী?", a: "আমাদের প্ল্যাটফর্মের প্রতিটি প্রজেক্ট বিশেষজ্ঞদের দ্বারা ৪-ধাপের আইনি ও আইডিয়াল ধারাবাহিকতা পরীক্ষা করা থাকে। কোনো হিডেন মামলা, ভুয়া দলিল বা সরকারি খাস জমি সংক্রান্ত ঝামেলা থাকে না।" },
                     { q: "কিস্তি বা EMI সুবিধা আছে কি?", a: "হ্যাঁ, আমাদের বেশিরভাগ রেডি ও আন্ডার-কনস্ট্রাকশন প্রজেক্টে ডেভেলপার কোম্পানির নিজস্ব নমনীয় কিস্তি সুবিধা রয়েছে। এছাড়া অংশীদার ব্যাংক বা আর্থিক প্রতিষ্ঠানগুলোর মাধ্যমে হোম লোন বা সুদমুক্ত সর্বোচ্চ কিস্তির সুবিধাও পাওয়া সম্ভব।" },
-                    { q: "আপনাদের অফিস কোথায়?", a: "আমাদের প্রধান কার্যালয় এবং কাস্টমার সাপোর্ট কেয়ার সেন্টার ঢাকার গুলশানে অবস্থিত। এছাড়া সিলেট ও চট্টগ্রাম রিজিওনে আমাদের রিজিওনাল সাপোর্ট বা পার্টনার অফিস রয়েছে। সরাসরি সাক্ষাতের জন্য যোগাযোগ বাটনে ক্লিক করে বুকিং দিন।" }
+                    { q: "আপনাদের অফিস কোথায়?", a: "আমাদের প্রধান কার্যালয় এবং কাস্টমার সাপোর্ট কেয়ার সেন্টার ঢাকার গুলশানে অবস্থিত। এছাড়া সিলেট ও চট্টগ্রাম রিজিওনে আমাদের রিজিওনাল সাপোর্ট বা পার্টনার office রয়েছে। সরাসরি সাক্ষাতের জন্য যোগাযোগ বাটনে ক্লিক করে বুকিং দিন।" }
                   ].map((item, index) => {
                     const actualIndex = index + 3;
                     const isOpen = openFaqIndex === actualIndex;
