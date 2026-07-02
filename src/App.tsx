@@ -46,7 +46,6 @@ export default function App() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
 
   // Load Database entities on-the-fly.
-  // This ensures a single failing table doesn't block the rest of the application.
   const loadDatabase = async () => {
     setLoadError(null);
     try {

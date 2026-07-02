@@ -26,8 +26,9 @@ export default function TrustSection() {
   ];
 
   return (
-    // FIX: Changed bg-[#021A15] to bg-[#021A15]/80 with backdrop-blur-xs so the background watermark flows seamlessly behind it
-    <section className="bg-[#021A15]/80 backdrop-blur-xs border-t border-b border-white/10 py-16 font-bengali relative overflow-hidden" id="trust-section">
+    // FIX: Changed background from green bg-[#021A15] to your brand's deep navy blue bg-[#05162E]/85
+    // with a backdrop blur so the gold background watermark logo can still flow gracefully behind it.
+    <section className="bg-[#05162E]/85 backdrop-blur-xs border-t border-b border-white/10 py-16 font-bengali relative overflow-hidden" id="trust-section">
       <div className="absolute inset-0 radial-glow opacity-40 pointer-events-none"></div>
       
       <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
