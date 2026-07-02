@@ -1,13 +1,14 @@
 import React from 'react';
-import { ShieldCheck, Mail, MapPin, Phone, MessageSquare } from 'lucide-react';
-import { SiteSettings } from '../../types';
+import { SiteSettings, Category } from '../../types';
 
 interface FooterProps {
   settings: SiteSettings;
-  onNavigate: (view: 'home' | 'admin' | 'details') => void;
+  categories: Category[]; // Added to map categories dynamically
+  setSelectedCategoryId?: (id: string) => void; // Added to set category filter on-click
+  onNavigate: (view: 'home' | 'admin' | 'details' | 'listings') => void; // Support 'listings' type
 }
 
-export default function Footer({ settings, onNavigate }: FooterProps) {
+export default function Footer({ settings, categories, setSelectedCategoryId, onNavigate }: FooterProps) {
   const currentYear = new Date().getFullYear();
 
   return (
@@ -15,13 +16,19 @@ export default function Footer({ settings, onNavigate }: FooterProps) {
       <div className="border-t border-white/5 py-12 pb-6 font-bengali">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           
-          {/* Footer Grid - Replicating Mockup */}
+          {/* Footer Grid */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10">
             
             {/* Brand/Logo Column */}
-            <div className="md:col-span-12 lg:col-span-5 space-y-3.5">
-              <div className="flex items-center space-x-2.5">
-                <span className="text-lg font-black text-[#C9A84C] tracking-tight font-sans">Astha Real Estate</span>
+            <div className="md:col-span-12 lg:col-span-5 space-y-4">
+              <div className="flex items-center">
+                {/* LOGO ADDED HERE */}
+                <img 
+                  src="https://xhaonenygjvgrpbstmky.supabase.co/storage/v1/object/public/Assets/ChatGPT%20Image%20Jun%2017,%202026,%2003_55_25%20AM%20(1).png"
+                  alt="Astha Real Estate"
+                  className="h-16 w-auto object-contain select-none"
+                  referrerPolicy="no-referrer"
+                />
               </div>
               <p className="text-xs leading-relaxed text-slate-300">
                 বাংলাদেশের অগ্রগামী বিশ্বস্ত প্রপার্টি পোর্টাল। সেরা ডেভেলপারদের প্রজেক্ট এক জায়গায়। আমাদের দক্ষ লিগ্যাল টিম দ্বারা ৪-ধাপের বিশেষ স্ক্রিনিং সম্পন্ন করা প্রজেক্ট নিয়ে আপনার ভবিষ্যৎ হোক নিরাপদ।
@@ -31,11 +38,21 @@ export default function Footer({ settings, onNavigate }: FooterProps) {
             {/* Properties Column */}
             <div className="md:col-span-6 lg:col-span-3 space-y-3.5 md:pl-8">
               <h4 className="text-white font-bold text-xs font-bengali">প্রপার্টি</h4>
-              <div className="flex flex-col space-y-2 text-xs text-slate-400">
-                <span className="cursor-pointer hover:text-[#C9A84C] transition-colors">ফ্ল্যাট / অ্যাপার্টমেন্ট</span>
-                <span className="cursor-pointer hover:text-[#C9A84C] transition-colors">জমি / প্লট</span>
-                <span className="cursor-pointer hover:text-[#C9A84C] transition-colors">কমার্শিয়াল</span>
-                <span className="cursor-pointer hover:text-[#C9A84C] transition-colors">ভিলা / ডুপ্লেক্স</span>
+              <div className="flex flex-col space-y-2 text-xs text-slate-400 items-start">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      if (setSelectedCategoryId) {
+                        setSelectedCategoryId(cat.id);
+                      }
+                      onNavigate('listings');
+                    }}
+                    className="text-left cursor-pointer hover:text-[#C9A84C] transition-colors focus:outline-none bg-transparent border-none p-0 font-bold"
+                  >
+                    {cat.name === 'জমি / প্লট' ? 'জমি / প্লট' : cat.name === 'ফ্ল্যাট' ? 'ফ্ল্যাট / অ্যাপার্টমেন্ট' : cat.name === 'কমার্শিয়াল' ? 'কমার্শিয়াল স্পেস' : cat.name}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -55,17 +72,6 @@ export default function Footer({ settings, onNavigate }: FooterProps) {
                 <span className="text-slate-500 font-light leading-relaxed">
                   অফিস: {settings.officeAddress}
                 </span>
-              </div>
-              
-              {/* Quick hidden admin access to retain capability */}
-              <div className="pt-2">
-                <button
-                  onClick={() => onNavigate('admin')}
-                  className="text-[10px] text-slate-500 hover:text-[#C9A84C] hover:underline cursor-pointer"
-                  id="footer-admin-toggle"
-                >
-                  প্রশাসনিক এডমিন রুম
-                </button>
               </div>
             </div>
 

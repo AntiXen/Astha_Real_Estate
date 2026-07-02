@@ -393,6 +393,8 @@ export default function App() {
       {viewState.page !== 'admin' && (
         <Footer 
           settings={settings} 
+          categories={categories}
+          setSelectedCategoryId={setSelectedCategoryId}
           onNavigate={(view) => handleNavigate(view)}
         />
       )}
