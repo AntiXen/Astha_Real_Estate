@@ -15,18 +15,31 @@
   --color-brand-gold-600: #C5A028;
 }
 
-body {
-  font-family: var(--font-bengali);
-  background-color: #ffffff;
-  color: #1e293b;
+/* 🛡️ Strict styling to prevent right-side margin leaks and horizontal shifts */
+html {
+  font-size: 112.5%; /* Scale base font size to 18px for better readability */
+  scroll-behavior: smooth;
+  background-color: #05162E; /* Updated to your brand's deep navy blue */
+  overflow-x: hidden; /* Strictly block horizontal scrollbars */
+  margin: 0;
+  padding: 0;
 }
 
-/* Custom gorgeous scrollbar for our properties drawer and pages */
+body {
+  font-family: var(--font-bengali);
+  background-color: #05162E; /* Updated to your brand's deep navy blue */
+  color: #f3f4f6;
+  margin: 0; /* Clear out default browser margin */
+  padding: 0;
+  overflow-x: hidden; /* Strictly block horizontal scrollbars */
+}
+
+/* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #ffffff;
+  background: #05162E; /* Match the dark blue background */
 }
 ::-webkit-scrollbar-thumb {
   background: rgba(176, 146, 63, 0.25);
@@ -34,11 +47,6 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #C9A84C;
-}
-
-html {
-  font-size: 112.5%; /* Scale base font size to 18px, making overall typography 12.5% larger and more readable */
-  scroll-behavior: smooth;
 }
 
 /* Theme helper classes */
