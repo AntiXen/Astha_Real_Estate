@@ -1,4 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { 
+  Search, Grid, Phone, MessageSquare, MapPin, Building, Briefcase, 
+  HelpCircle, ShieldCheck, HelpCircle as HelpIcon, ArrowRight, Sparkles,
+  ChevronDown, Star, ThumbsUp, CheckCircle2, X, Users, Globe, Layers,
+  Award, Landmark
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 // Models
 import { SiteSettings, Category, Company, Property, RouteState } from './types';
@@ -25,6 +32,48 @@ import Testimonials from './components/public/Testimonials';
 import LeadForm from './components/public/LeadForm';
 import FaqAccordion from './components/public/FaqAccordion';
 import FloatingCtas from './components/public/FloatingCtas';
+import AllListings from './components/public/AllListings';
+
+const BengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+
+function toBengaliNumStr(numStr: string): string {
+  return numStr.split('').map(char => {
+    const parsed = parseInt(char, 10);
+    return isNaN(parsed) ? char : BengaliDigits[parsed];
+  }).join('');
+}
+
+interface CountUpTextProps {
+  target: number;
+  suffix?: string;
+  duration?: number;
+  isBengali?: boolean;
+}
+
+function CountUpText({ target, suffix = '', duration = 1200, isBengali = false }: CountUpTextProps) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    let startTime: number | null = null;
+    const step = (timestamp: number) => {
+      if (!active) return;
+      if (!startTime) startTime = timestamp;
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      setCount(Math.floor(progress * target));
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      }
+    };
+    requestAnimationFrame(step);
+    return () => {
+      active = false;
+    };
+  }, [target, duration]);
+
+  const displayedCount = isBengali ? toBengaliNumStr(count.toString()) : count.toString();
+  return <span className="tabular-nums">{displayedCount}{suffix}</span>;
+}
 
 export default function App() {
   // Database States
@@ -167,7 +216,7 @@ export default function App() {
     }
   };
 
-  const handleNavigate = (page: 'home' | 'admin' | 'details', propertyId: string | null = null) => {
+  const handleNavigate = (page: 'home' | 'admin' | 'details' | 'listings', propertyId: string | null = null) => {
     if (page === 'admin') {
       window.location.hash = 'admin';
     } else {
@@ -277,7 +326,18 @@ export default function App() {
             onResetDatabase={handleResetDatabase}
             userEmail=""
           />
+        ) : viewState.page === 'listings' ? (
+          /* DEDICATED ALL LISTINGS PORTAL PAGE */
+          <AllListings 
+            properties={properties}
+            categories={categories}
+            companies={companies}
+            settings={settings}
+            onSelectProperty={(id) => handleNavigate('home', id)}
+            onBackToHome={() => handleNavigate('home')}
+          />
         ) : (
+          /* STANDARD HOMEPAGE VIEW */
           <div id="landing-main-view">
             {/* 1. Hero Banner */}
             <Hero 
@@ -314,6 +374,7 @@ export default function App() {
               setSelectedCompanyId={setSelectedCompanyId}
               onSelectProperty={(id) => handleNavigate('home', id)}
               onResetFilters={handleResetFilters}
+              onSeeMore={() => handleNavigate('listings')} // Launches Listings Portal
             />
 
             {/* 6. Customer Testimonials & Modal case studies */}

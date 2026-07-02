@@ -13,6 +13,7 @@ interface PropertyShowroomProps {
   setSelectedCompanyId: (val: string) => void;
   onSelectProperty: (id: string) => void;
   onResetFilters: () => void;
+  onSeeMore: () => void; // Callback to switch views
 }
 
 export default function PropertyShowroom({
@@ -24,8 +25,13 @@ export default function PropertyShowroom({
   selectedCompanyId,
   setSelectedCompanyId,
   onSelectProperty,
-  onResetFilters
+  onResetFilters,
+  onSeeMore
 }: PropertyShowroomProps) {
+  
+  // Limit the homepage grid display to at most 6 properties
+  const displayProperties = filteredProperties.slice(0, 6);
+
   return (
     <section className="py-12 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-8" id="property-showroom-section">
       
@@ -50,7 +56,7 @@ export default function PropertyShowroom({
             className={`rounded-md px-3.5 py-2 text-xs sm:text-sm font-bold border transition-all cursor-pointer font-bengali ${
               selectedCompanyId === 'all'
                 ? 'bg-[#C9A84C] border-[#C9A84C] text-[#0A1D37] font-extrabold shadow-sm'
-                : 'border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                : 'border-white/10 text-slate-300 hover:bg-white/10 hover:text-white bg-slate-900/50'
             }`}
           >
             সমস্ত ডেভেলপার
@@ -65,7 +71,7 @@ export default function PropertyShowroom({
                 className={`rounded-md px-3.5 py-2 text-xs sm:text-sm font-bold border transition-all cursor-pointer font-bengali ${
                   selectedCompanyId === comp.id
                     ? 'bg-[#C9A84C] border-[#C9A84C] text-[#0A1D37] font-extrabold shadow-sm'
-                    : 'border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                    : 'border-white/10 text-slate-300 hover:bg-white/10 hover:text-white bg-slate-900/50'
                 }`}
               >
                 {comp.companyName.split('(')[0]} ({count})
@@ -77,12 +83,12 @@ export default function PropertyShowroom({
 
       {/* Property Showcase Catalog Grid / Empty State */}
       <div className="space-y-5">
-        {filteredProperties.length > 0 ? (
+        {displayProperties.length > 0 ? (
           <div 
             className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
             id="properties-grid"
           >
-            {filteredProperties.map((prop) => (
+            {displayProperties.map((prop) => (
               <div key={prop.id}>
                 <PropertyCard 
                   property={prop}
@@ -96,7 +102,7 @@ export default function PropertyShowroom({
           </div>
         ) : (
           <div 
-            className="text-center py-14 bg-slate-50 rounded-lg border border-slate-250 max-w-lg mx-auto space-y-3 text-slate-800"
+            className="text-center py-14 bg-slate-900/40 rounded-xl border border-white/5 max-w-lg mx-auto space-y-3 text-white"
             id="empty-state-card"
           >
             <div className="h-10 w-10 bg-[#C9A84C]/10 rounded-full flex items-center justify-center text-[#C9A84C] mx-auto">
@@ -115,6 +121,18 @@ export default function PropertyShowroom({
           </div>
         )}
       </div>
+
+      {/* See More CTA - Appears only if there are more than 6 properties matching current filter */}
+      {filteredProperties.length > 6 && (
+        <div className="flex justify-center pt-8">
+          <button 
+            onClick={onSeeMore}
+            className="px-8 py-3.5 rounded-xl bg-transparent border-2 border-[#C9A84C] text-[#C9A84C] hover:bg-[#C9A84C] hover:text-[#0A1D37] font-black text-xs sm:text-sm tracking-wide transition-all duration-300 shadow-md hover:shadow-lg cursor-pointer transform hover:-translate-y-0.5 outline-none font-sans"
+          >
+            আরও প্রজেক্ট দেখুন →
+          </button>
+        </div>
+      )}
 
     </section>
   );

@@ -5,8 +5,8 @@ import { SiteSettings } from '../../types';
 
 interface NavbarProps {
   settings: SiteSettings;
-  currentView: 'home' | 'admin' | 'details';
-  onNavigate: (view: 'home' | 'admin' | 'details') => void;
+  currentView: 'home' | 'admin' | 'details' | 'listings'; // Added 'listings' type support
+  onNavigate: (view: 'home' | 'admin' | 'details' | 'listings') => void; // Added 'listings' type support
   selectedCategoryId?: string;
   setSelectedCategoryId?: (id: string) => void;
 }
@@ -30,14 +30,9 @@ export default function Navbar({
     if (setSelectedCategoryId) {
       setSelectedCategoryId('all');
     }
-    onNavigate('home');
+    // Navigate directly to the listings page instead of just scrolling down
+    onNavigate('listings'); 
     setMobileMenuOpen(false);
-    setTimeout(() => {
-      const element = document.getElementById('property-showroom-section');
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }, 100);
   };
 
   const handleTestimonialsClick = () => {
@@ -84,7 +79,9 @@ export default function Navbar({
         <nav className="hidden lg:flex items-center space-x-8 text-sm font-bold tracking-wide" id="nav-middle-links">
           <button 
             onClick={handleHomeClick}
-            className="relative py-2 text-slate-800 hover:text-[#b0923f] transition-colors cursor-pointer group font-extrabold"
+            className={`relative py-2 transition-colors cursor-pointer group font-extrabold ${
+              currentView === 'home' ? 'text-[#b0923f]' : 'text-slate-800 hover:text-[#b0923f]'
+            }`}
           >
             হোম
             <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-[#C9A84C] transition-all duration-300 group-hover:w-full" />
@@ -92,7 +89,9 @@ export default function Navbar({
           
           <button 
             onClick={handleProkolpoClick}
-            className="relative py-2 text-slate-700 hover:text-[#b0923f] transition-colors cursor-pointer group font-extrabold"
+            className={`relative py-2 transition-colors cursor-pointer group font-extrabold ${
+              currentView === 'listings' ? 'text-[#b0923f]' : 'text-slate-700 hover:text-[#b0923f]'
+            }`}
           >
             প্রকল্প
             <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-[#C9A84C] transition-all duration-300 group-hover:w-full" />

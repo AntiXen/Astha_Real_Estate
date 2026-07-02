@@ -37,7 +37,7 @@ export interface Property {
   companyId: string;
   images: string[];
   isFeatured: boolean;
-  status: string; // Available, Sold Out, or Urgency tag like 'मात्र ৩টি প্লট বাকি!'
+  status: string; // Available, Sold Out, or Urgency tag like 'মাত্র ৩টি প্লট বাকি!'
   bedrooms?: number;
   bathrooms?: number;
   size?: number; // Sq. Ft. or Katha
@@ -59,6 +59,6 @@ export interface Inquiry {
 }
 
 export interface RouteState {
-  page: 'home' | 'admin' | 'details';
+  page: 'home' | 'admin' | 'details' | 'listings'; // Added 'listings' page
   propertyId: string | null;
 }
