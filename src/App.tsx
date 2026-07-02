@@ -6,6 +6,9 @@ import { SiteSettings, Category, Company, Property, RouteState } from './types';
 // Services
 import { dbService } from './services/db';
 
+// Validation Utilities
+import { isValidBDPhoneNumber, normalizeBDPhoneNumber, sanitizeInput } from './utils/validation';
+
 // Public Shared Components
 import Navbar from './components/public/Navbar';
 import Footer from './components/public/Footer';
@@ -238,6 +241,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#05162E] text-[#f3f4f6] font-bengali antialiased relative">
+      
+      {/* Global Astha Logo Background Watermark */}
+      <div className="fixed inset-0 pointer-events-none select-none z-0 flex items-center justify-center overflow-hidden opacity-[0.08]" id="global-brand-watermark">
+        <img 
+          src="https://xhaonenygjvgrpbstmky.supabase.co/storage/v1/object/public/Assets/ChatGPT%20Image%20Jun%2017,%202026,%2003_55_25%20AM%20(1).png"
+          alt="Astha Logo Watermark"
+          className="w-[85vw] h-[85vw] max-w-[800px] max-h-[800px] object-contain select-none pointer-events-none"
+          referrerPolicy="no-referrer"
+        />
+      </div>
+
       {/* Navbar (Common) */}
       {viewState.page !== 'admin' && (
         <Navbar 
@@ -250,7 +264,7 @@ export default function App() {
       )}
 
       {/* Main Routed Canvas */}
-      <main className="flex-1">
+      <main className="flex-1 z-10 relative">
         {viewState.page === 'admin' ? (
           <AdminPanel 
             settings={settings}
