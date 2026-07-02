@@ -22,15 +22,13 @@ export default function Footer({ settings, categories, setSelectedCategoryId, on
             {/* Brand/Logo Column */}
             <div className="md:col-span-12 lg:col-span-5 space-y-4">
               <div className="flex items-center">
-                {/* Wrapped logo in a deep navy badge to prevent white-on-white text invisibility */}
-                <div className="bg-[#0B2545] p-3 px-4.5 rounded-2xl shadow-sm inline-flex items-center justify-center">
-                  <img 
-                    src="https://xhaonenygjvgrpbstmky.supabase.co/storage/v1/object/public/Assets/ChatGPT%20Image%20Jun%2017,%202026,%2003_55_25%20AM%20(1).png"
-                    alt="Astha Real Estate"
-                    className="h-11 w-auto object-contain select-none"
-                    referrerPolicy="no-referrer"
-                  />
-                </div>
+                {/* Render the transparent PNG logo directly on the white background */}
+                <img 
+                  src="https://xhaonenygjvgrpbstmky.supabase.co/storage/v1/object/public/Assets/ChatGPT%20Image%20Jun%2017,%202026,%2003_55_25%20AM%20(1).png"
+                  alt="Astha Real Estate"
+                  className="h-14 sm:h-16 w-auto object-contain select-none"
+                  referrerPolicy="no-referrer"
+                />
               </div>
               <p className="text-xs leading-relaxed text-slate-500 font-medium">
                 বাংলাদেশের অগ্রগামী বিশ্বস্ত প্রপার্টি পোর্টাল। সেরা ডেভেলপারদের প্রজেক্ট এক জায়গায়। আমাদের দক্ষ লিগ্যাল টিম দ্বারা ৪-ধাপের বিশেষ স্ক্রিনিং সম্পন্ন করা প্রজেক্ট নিয়ে আপনার ভবিষ্যৎ হোক নিরাপদ।
